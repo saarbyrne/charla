@@ -37,6 +37,7 @@ import { defaultThemes } from './themes.js';
  * @property {string} textModel
  * @property {string} voice
  * @property {string} about
+ * @property {string} level      A1 to C2
  * @property {string[]} [liveModels]
  * @property {string[]} [textModels]
  */
@@ -66,7 +67,7 @@ export const DEFAULT_INTERESTS = [
 export function defaultData() {
   return {
     schemaVersion: SCHEMA_VERSION,
-    settings: { apiKey: '', liveModel: '', textModel: '', voice: '', about: '', liveModels: [], textModels: [] },
+    settings: { apiKey: '', liveModel: '', textModel: '', voice: '', about: '', level: 'A2', liveModels: [], textModels: [] },
     themes: defaultThemes(),
     interests: DEFAULT_INTERESTS.slice(),
     covered: [],

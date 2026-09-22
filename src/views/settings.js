@@ -3,6 +3,7 @@ import { h } from '../lib/h.js';
 import { VOICES } from '../core/gemini.js';
 import { today } from '../core/dates.js';
 import { KeyForm } from './keyCard.js';
+import { LevelPicker } from './levelPicker.js';
 
 /** @typedef {import('../app.js').App} App */
 
@@ -52,6 +53,7 @@ export function Settings(app) {
 
   return h('section', null,
     h('div', { class: 'page-head' }, h('h1', null, 'Ajustes')),
+    h('div', { class: 'card' }, h('h2', null, 'Nivel'), LevelPicker(app)),
     h('div', { class: 'card' }, h('h2', null, 'Clave de Gemini'), KeyForm(app, { onDone: app.rerender })),
     s.apiKey
       ? h('div', { class: 'card' },

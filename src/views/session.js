@@ -100,6 +100,7 @@ export function Session(app) {
         previousQuestions: theme?.questions ?? [],
         topic: p.topic,
         about: d.settings.about,
+        level: d.settings.level,
         recent: recentForPrompt(store),
       }),
       kickoff: kickoff(p.activity, p.topic),

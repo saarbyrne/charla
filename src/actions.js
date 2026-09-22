@@ -47,7 +47,7 @@ export async function generateTopics(store) {
   let topics;
   try {
     if (!settings.textModel) throw new Error('no text model');
-    const res = await generateJson(settings.apiKey, settings.textModel, topicsPrompt({ interests: ordered, covered: covered.slice(-40).map((c) => c.title) }));
+    const res = await generateJson(settings.apiKey, settings.textModel, topicsPrompt({ interests: ordered, covered: covered.slice(-40).map((c) => c.title), level: settings.level }));
     topics = (res?.temas ?? [])
       .filter((/** @type {any} */ t) => t?.titulo)
       .slice(0, 3)
@@ -91,7 +91,7 @@ export async function summarise(store, id) {
   const { apiKey, textModel } = store.data.settings;
   try {
     if (!textModel) throw new Error('No hay modelo de texto');
-    const raw = await generateJson(apiKey, textModel, summaryPrompt(s, transcriptText(s.transcript)));
+    const raw = await generateJson(apiKey, textModel, summaryPrompt(s, transcriptText(s.transcript), store.data.settings.level));
     const arr = (/** @type {any} */ v) => (Array.isArray(v) ? v : []);
     const summary = {
       preguntas: arr(raw.preguntas).map(String).slice(0, 5),

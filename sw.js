@@ -28,6 +28,7 @@ const PRECACHE = [
   "src/views/format.js",
   "src/views/history.js",
   "src/views/keyCard.js",
+  "src/views/levelPicker.js",
   "src/views/session.js",
   "src/views/settings.js",
   "src/views/themes.js",

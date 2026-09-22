@@ -4,6 +4,7 @@ import { today, shortDate } from '../core/dates.js';
 import { pickTheme } from '../core/themes.js';
 import { generateTopics } from '../actions.js';
 import { KeyForm } from './keyCard.js';
+import { LevelPicker } from './levelPicker.js';
 import { startSession } from './session.js';
 import { duration, sessionLabel } from './format.js';
 
@@ -19,6 +20,7 @@ export function Today(app) {
   if (!d.settings.apiKey) {
     return h('section', null,
       h('div', { class: 'page-head' }, h('h1', null, 'Charla')),
+      h('div', { class: 'card' }, h('h2', null, 'Nivel'), LevelPicker(app)),
       h('div', { class: 'card' }, h('h2', null, 'Clave de Gemini'), KeyForm(app, { onDone: app.rerender })));
   }
 
@@ -70,7 +72,7 @@ export function Today(app) {
 
   const recent = d.sessions.slice(-3).reverse();
   return h('section', null,
-    h('div', { class: 'page-head' }, h('h1', null, 'Hoy'), h('div', { class: 'head-meta' }, shortDate(date))),
+    h('div', { class: 'page-head' }, h('h1', null, 'Hoy'), h('div', { class: 'head-meta' }, `${d.settings.level} · ${shortDate(date)}`)),
     questions,
     learn,
     recent.length

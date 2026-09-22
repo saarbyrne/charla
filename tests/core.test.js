@@ -167,3 +167,16 @@ test('store: persistence, export without key, import keeps key, old transcripts 
   s.setItem(KEY, '{broken');
   assert.equal(createStore(s).data.sessions.length, 0);
 });
+
+test('level shapes the prompts', async () => {
+  const { LEVELS, levelGuide } = await import('../src/core/prompts.js');
+  assert.deepEqual(LEVELS, ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']);
+  const a1 = systemPrompt({ activity: 'questions', theme: 'La casa', level: 'A1' });
+  assert.match(a1, /Mi nivel es A1/);
+  assert.match(systemPrompt({ activity: 'learn', topic: { interest: 'x', title: 'y' }, level: 'C1' }), /Mi nivel es C1/);
+  assert.match(systemPrompt({ activity: 'questions', theme: 'La casa' }), /Mi nivel es A2/);
+  assert.equal(levelGuide('Z9'), levelGuide('A2'));
+  assert.match(topicsPrompt({ interests: ['a'], covered: [], level: 'B2' }), /nivel B2/);
+  assert.match(summaryPrompt({ activity: 'questions', theme: 'x' }, 'Yo: hola', 'B1'), /nivel del estudiante es B1/);
+  assert.equal(createStore(memoryStorage()).data.settings.level, 'A2');
+});
