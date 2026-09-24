@@ -2,7 +2,7 @@
 
 Charla is a daily live Spanish conversation app with a memory. You talk out loud with Gemini in real time, and Charla remembers the themes, questions and topics from earlier sessions. Everything is stored on your device, and there are no dependencies and no server.
 
-Live at https://saarbyrne.github.io/charla/ once GitHub Pages is on. On a phone, open it and add it to the Home Screen.
+Live at https://charla.hecho.fyi. On a phone, open it and add it to the Home Screen.
 
 ## Running
 
