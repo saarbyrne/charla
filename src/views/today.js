@@ -19,7 +19,7 @@ export function Today(app) {
 
   if (!d.settings.apiKey) {
     return h('section', null,
-      h('div', { class: 'page-head' }, h('h1', null, 'Charla')),
+      h('div', { class: 'page-head' }, h('h1', null, 'charla')),
       h('div', { class: 'card' }, h('h2', null, 'Nivel'), LevelPicker(app)),
       h('div', { class: 'card' }, h('h2', null, 'Clave de Gemini'), KeyForm(app, { onDone: app.rerender })));
   }
