@@ -13,6 +13,7 @@ import { appendChunk, cleanTurns } from '../core/transcript.js';
  * @property {string} voice
  * @property {string} systemPrompt
  * @property {string} kickoff
+ * @property {AudioContext} [ctx]  Created during the tap that started the session, so iOS allows audio.
  */
 
 export class LiveSession extends EventTarget {
@@ -59,7 +60,7 @@ export class LiveSession extends EventTarget {
   async start() {
     this.setStatus('connecting');
     const AC = window.AudioContext ?? /** @type {any} */ (window).webkitAudioContext;
-    this.ctx = /** @type {AudioContext} */ (new AC());
+    this.ctx = this.opts.ctx && this.opts.ctx.state !== 'closed' ? this.opts.ctx : /** @type {AudioContext} */ (new AC());
     await this.ctx.resume();
     this.stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },

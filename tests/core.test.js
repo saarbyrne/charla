@@ -180,3 +180,8 @@ test('level shapes the prompts', async () => {
   assert.match(summaryPrompt({ activity: 'questions', theme: 'x' }, 'Yo: hola', 'B1'), /nivel del estudiante es B1/);
   assert.equal(createStore(memoryStorage()).data.settings.level, 'A2');
 });
+
+test('topicsPrompt lists rejected topics', () => {
+  const p = topicsPrompt({ interests: ['viajes'], covered: [], rejected: ['La Sagrada Familia de Gaudí'] });
+  assert.match(p, /no quiere estos temas[\s\S]*- La Sagrada Familia de Gaudí/);
+});

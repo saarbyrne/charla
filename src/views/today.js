@@ -14,7 +14,7 @@ import { duration, sessionLabel } from './format.js';
 export function Today(app) {
   const { store } = app;
   const date = today();
-  if (store.data.day.date !== date) store.update((d) => { d.day = { date, topics: [], skip: [] }; });
+  if (store.data.day.date !== date) store.update((d) => { d.day = { date, topics: [], skip: [], rejected: [] }; });
   const d = store.data;
 
   if (!d.settings.apiKey) {
@@ -38,8 +38,31 @@ export function Today(app) {
       : [h('div', { class: 'sub' }, 'Todos los temas están en pausa'), h('div', { class: 'actions' }, h('a', { class: 'btn', href: '#/temas' }, 'Añadir temas'))],
   );
 
+  /** Today's interests. Tapping one picks or unpicks it for today and asks for new topics. */
+  const picks = h('div', { class: 'picks' });
+  const renderPicks = () => {
+    const picked = store.data.day.picked ?? [];
+    replace(picks, store.data.interests.map((i) =>
+      h('button', {
+        type: 'button', class: 'pick', lang: 'es', 'aria-pressed': String(picked.includes(i)),
+        onclick: () => {
+          store.update((x) => {
+            const p = x.day.picked ?? [];
+            x.day.picked = p.includes(i) ? p.filter((v) => v !== i) : [...p, i];
+            x.day.topics = [];
+          });
+          renderPicks();
+          renderTopics();
+        },
+      }, i)));
+  };
+  renderPicks();
+  const interestsCard = store.data.interests.length
+    ? h('div', { class: 'card today-interests' }, h('h2', null, 'Hoy me interesa'), picks)
+    : null;
+
   const topicList = h('div', { class: 'topics' });
-  let loading = false;
+  let request = 0;
   const renderTopics = () => {
     const topics = store.data.day.topics;
     if (!store.data.interests.length) {
@@ -48,13 +71,11 @@ export function Today(app) {
     }
     if (!topics.length) {
       replace(topicList, h('div', { class: 'sub loading' }, 'Buscando temas…'));
-      if (!loading) {
-        loading = true;
-        generateTopics(store).then(() => {
-          loading = false;
-          if (store.data.day.topics.length) renderTopics();
-        });
-      }
+      // Each new request replaces the last, so a slow answer for old picks is ignored.
+      const mine = ++request;
+      generateTopics(store, () => mine === request).then(() => {
+        if (mine === request && store.data.day.topics.length) renderTopics();
+      });
       return;
     }
     replace(topicList, topics.map((t) =>
@@ -68,11 +89,12 @@ export function Today(app) {
     h('h2', null, 'Aprender algo'),
     topicList,
     h('div', { class: 'actions' },
-      h('button', { type: 'button', class: 'btn', onclick: () => { store.update((x) => { x.day.topics = []; }); renderTopics(); } }, 'Otros temas')));
+      h('button', { type: 'button', class: 'btn', onclick: () => { store.update((x) => { x.day.rejected = [...(x.day.rejected ?? []), ...x.day.topics.map((t) => t.title)]; x.day.topics = []; }); renderTopics(); } }, 'Otros temas')));
 
   const recent = d.sessions.slice(-3).reverse();
   return h('section', null,
     h('div', { class: 'page-head' }, h('h1', null, 'Hoy'), h('div', { class: 'head-meta' }, `${d.settings.level} · ${shortDate(date)}`)),
+    interestsCard,
     questions,
     learn,
     recent.length

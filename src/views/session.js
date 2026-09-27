@@ -17,6 +17,7 @@ import { SummaryBlock } from './history.js';
  * @property {string} [themeName]
  * @property {number} [round]
  * @property {Topic} [topic]
+ * @property {AudioContext} [ctx]
  */
 
 /** @type {Plan | null} */
@@ -24,7 +25,17 @@ let plan = null;
 
 /** @param {Plan} p */
 export function startSession(p) {
-  plan = p;
+  // Create the audio context inside the tap, so the session can start without a second tap.
+  /** @type {AudioContext | undefined} */
+  let ctx;
+  try {
+    const AC = window.AudioContext ?? /** @type {any} */ (window).webkitAudioContext;
+    ctx = new AC();
+    ctx.resume().catch(() => {});
+  } catch {
+    ctx = undefined;
+  }
+  plan = { ...p, ctx };
   location.hash = `#/sesion?r=${Date.now()}`;
 }
 
@@ -104,6 +115,7 @@ export function Session(app) {
         recent: recentForPrompt(store),
       }),
       kickoff: kickoff(p.activity, p.topic),
+      ctx: p.ctx,
     });
     live.addEventListener('status', (e) => setStatus(/** @type {CustomEvent} */ (e).detail));
     live.addEventListener('transcript', (e) => renderTranscript(/** @type {CustomEvent} */ (e).detail));
@@ -185,6 +197,21 @@ export function Session(app) {
     }
   }
 
+  // Leaving the screen (back link, apps panel, browser back) ends the session and saves it.
+  const onLeave = () => {
+    if (location.hash.startsWith('#/sesion')) return;
+    window.removeEventListener('hashchange', onLeave);
+    if (live && !finished) {
+      live.stop();
+      finish(null);
+    }
+  };
+  window.addEventListener('hashchange', onLeave);
+
+  if (p.ctx) {
+    begin();
+    return root;
+  }
   replace(root,
     head(),
     h('div', { class: 'card start-card' },

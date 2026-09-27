@@ -50,7 +50,7 @@ import { defaultThemes } from './themes.js';
  * @property {string[]} interests
  * @property {{ date: string, interest: string, title: string }[]} covered
  * @property {Session[]} sessions
- * @property {{ date: string, topics: Topic[], skip: string[] }} day
+ * @property {{ date: string, topics: Topic[], skip: string[], rejected: string[], shownInterests?: string[], picked?: string[] }} day
  */
 
 export const KEY = 'charla:data';
@@ -72,7 +72,7 @@ export function defaultData() {
     interests: DEFAULT_INTERESTS.slice(),
     covered: [],
     sessions: [],
-    day: { date: '', topics: [], skip: [] },
+    day: { date: '', topics: [], skip: [], rejected: [] },
   };
 }
 

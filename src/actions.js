@@ -32,12 +32,21 @@ export async function connectKey(store, apiKey) {
 /**
  * Three topics for "Aprender algo". Falls back to plain interests if the text model fails.
  * @param {Store} store
+ * @param {() => boolean} [isCurrent]  false when a newer request has started; the result is then not saved
  * @returns {Promise<Topic[]>}
  */
-export async function generateTopics(store) {
-  const { settings, interests, covered } = store.data;
-  const recentInterests = covered.slice(-6).map((c) => c.interest);
-  const ordered = [...interests].sort((a, b) => recentInterests.indexOf(a) - recentInterests.indexOf(b));
+export async function generateTopics(store, isCurrent = () => true) {
+  const { settings, interests, covered, day } = store.data;
+  const rejected = day.rejected ?? [];
+  // Pick 3 interests in code, so each "Otros temas" asks about different interests.
+  // Interests covered recently or shown today go to the back of the queue.
+  const recent = new Set([...covered.slice(-6).map((c) => c.interest), ...(day.shownInterests ?? [])]);
+  // Interests picked for today, or all interests when none are picked.
+  const picked = (day.picked ?? []).filter((i) => interests.includes(i));
+  const pool = picked.length ? picked : interests;
+  const shuffled = [...pool].sort(() => Math.random() - 0.5);
+  const ordered = [...shuffled.filter((i) => !recent.has(i)), ...shuffled.filter((i) => recent.has(i))];
+  const chosen = ordered.slice(0, 3);
   const fallback = () =>
     ordered
       .slice()
@@ -47,7 +56,7 @@ export async function generateTopics(store) {
   let topics;
   try {
     if (!settings.textModel) throw new Error('no text model');
-    const res = await generateJson(settings.apiKey, settings.textModel, topicsPrompt({ interests: ordered, covered: covered.slice(-40).map((c) => c.title), level: settings.level }));
+    const res = await generateJson(settings.apiKey, settings.textModel, topicsPrompt({ interests: chosen, covered: covered.slice(-40).map((c) => c.title), rejected, level: settings.level }), fetch, 1);
     topics = (res?.temas ?? [])
       .filter((/** @type {any} */ t) => t?.titulo)
       .slice(0, 3)
@@ -56,8 +65,9 @@ export async function generateTopics(store) {
   } catch {
     topics = fallback();
   }
+  if (!isCurrent()) return topics;
   store.update((d) => {
-    d.day = { ...d.day, date: today(), topics };
+    d.day = { ...d.day, date: today(), topics, shownInterests: [...(d.day.shownInterests ?? []), ...topics.map((/** @type {Topic} */ t) => t.interest)] };
   });
   return topics;
 }

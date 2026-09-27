@@ -86,13 +86,13 @@ export function parseJson(text) {
  * @param {string} prompt
  * @param {typeof fetch} [fetchFn]
  */
-export async function generateJson(key, model, prompt, fetchFn = fetch) {
+export async function generateJson(key, model, prompt, fetchFn = fetch, temperature = 0.7) {
   const res = await fetchFn(`${API}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature: 0.7 },
+      generationConfig: { responseMimeType: 'application/json', temperature },
     }),
   });
   const body = await res.json().catch(() => ({}));

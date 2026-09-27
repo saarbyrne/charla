@@ -108,11 +108,14 @@ Transcripción:
 ${transcript}`;
 }
 
-/** @param {{ interests: string[], covered: string[], level?: string }} p */
-export function topicsPrompt({ interests, covered, level }) {
+/** @param {{ interests: string[], covered: string[], rejected?: string[], level?: string }} p */
+export function topicsPrompt({ interests, covered, rejected = [], level }) {
   return `Propón 3 temas concretos e interesantes para aprender en una conversación de 10 minutos en español, con un estudiante de nivel ${level ?? 'A2'}.
-Cada tema debe salir de uno de estos intereses, y los 3 temas deben ser de intereses diferentes: ${interests.join(', ')}.
-${covered.length ? `No repitas estos temas, que ya hemos visto:\n${covered.map((c) => `- ${c}`).join('\n')}\n` : ''}
+${interests.length >= 3
+    ? `Cada tema debe salir de uno de estos intereses, y los 3 temas deben ser de intereses diferentes: ${interests.join(', ')}.`
+    : `Cada tema debe salir de ${interests.length > 1 ? 'uno de estos intereses' : 'este interés'}: ${interests.join(', ')}. Los 3 temas deben ser muy diferentes entre sí.`}
+Evita los temas más famosos y obvios de cada interés. Elige personas, lugares, ideas o historias menos conocidas, de cualquier país del mundo hispanohablante o de fuera.
+${covered.length ? `No repitas estos temas, que ya hemos visto:\n${covered.map((c) => `- ${c}`).join('\n')}\n` : ''}${rejected.length ? `El estudiante no quiere estos temas. No los repitas y no propongas nada parecido, ni la misma persona, lugar u obra:\n${rejected.map((c) => `- ${c}`).join('\n')}\n` : ''}
 Devuelve solo JSON con esta forma:
 {"temas": [{"interes": "interés", "titulo": "título corto del tema en español", "gancho": "una frase que explica por qué es interesante"}]}`;
 }
