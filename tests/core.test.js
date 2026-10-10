@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { systemPrompt, kickoff, summaryPrompt, topicsPrompt, transcriptText } from '../src/core/prompts.js';
 import { appendChunk, cleanTurns } from '../src/core/transcript.js';
 import { floatTo16, int16ToFloat, downsample, pcmToBase64, base64ToPcm, parseRate } from '../src/core/audio.js';
-import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels } from '../src/core/gemini.js';
+import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels, textThinking, LEARNER_SILENCE_MS } from '../src/core/gemini.js';
 import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS } from '../src/core/store.js';
 import { saveSession } from '../src/actions.js';
 
@@ -14,6 +14,16 @@ test('system prompt for 5 preguntas', () => {
   assert.match(p, /- ¿Qué desayunas\?/);
   assert.match(p, /Sobre mí:\nVivo en Zamora\./);
   assert.match(p, /2026-09-20: Aprender algo: Le Corbusier/);
+});
+
+test('the 5 preguntas prompt numbers the questions and waits through pauses', () => {
+  const p = systemPrompt({ activity: 'questions', theme: 'El ciclismo' });
+  assert.match(p, /primera, segunda, tercera, cuarta y quinta\. Usa cada número una sola vez/);
+  assert.match(p, /no tienen número y no cuentan como una de las 5/);
+  assert.match(p, /si acaba en «pero», «y» o «porque», di solo «¿Sí\?» o «Sigue» y espera/);
+  assert.match(p, /No me pidas que hable en español, salvo que diga una frase entera en otro idioma/);
+  const learn = systemPrompt({ activity: 'learn', topic: { interest: 'x', title: 'y' } });
+  assert.match(learn, /Hago pausas para pensar/, 'the pause rule is for both activities');
 });
 
 test('system prompt for aprender algo', () => {
@@ -96,10 +106,12 @@ test('live messages', () => {
       model: 'models/gemini-3.8-live',
       generationConfig: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Kore' } } } },
       systemInstruction: { parts: [{ text: 'Hola' }] },
-      inputAudioTranscription: {},
+      realtimeInputConfig: { automaticActivityDetection: { endOfSpeechSensitivity: 'END_SENSITIVITY_LOW', silenceDurationMs: 1500 } },
+      inputAudioTranscription: { languageCodes: ['es-ES'] },
       outputAudioTranscription: {},
     },
   });
+  assert.ok(LEARNER_SILENCE_MS > 800, 'longer than Google\'s default pause');
   assert.equal(setupMessage({ model: 'models/x', systemPrompt: '' }).setup.generationConfig.speechConfig, undefined);
   assert.equal(setupMessage({ model: 'models/x', systemPrompt: '' }).setup.model, 'models/x');
   assert.deepEqual(audioMessage('AAA'), { realtimeInput: { audio: { data: 'AAA', mimeType: 'audio/pcm;rate=16000' } } });
@@ -209,8 +221,36 @@ test('REST calls with a fake fetch', async () => {
   assert.deepEqual(await generateJson('KEY', 'gemini-3.5-flash', 'p', fake), { temas: [1, 2, 3] });
   assert.match(calls[1].url, /models\/gemini-3\.5-flash:generateContent$/);
   assert.equal(JSON.parse(calls[1].init.body).generationConfig.responseMimeType, 'application/json');
+  assert.deepEqual(JSON.parse(calls[1].init.body).generationConfig.thinkingConfig, { thinkingLevel: 'low' });
   const bad = async () => new Response(JSON.stringify({ error: { message: 'API key not valid' } }), { status: 400 });
   await assert.rejects(listModels('x', bad), /API key not valid/);
+});
+
+test('summaries ask for less thinking, except on lite models', () => {
+  assert.deepEqual(textThinking('gemini-3.8-flash'), { thinkingLevel: 'low' });
+  assert.deepEqual(textThinking('gemini-flash-latest'), { thinkingLevel: 'low' });
+  assert.equal(textThinking('gemini-3.5-flash-lite'), undefined);
+  assert.equal(textThinking('gemini-flash-lite-latest'), undefined);
+});
+
+test('a model that refuses the thinking setting is asked again without it', async () => {
+  const bodies = [];
+  const fake = async (_url, init) => {
+    const body = JSON.parse(init.body);
+    bodies.push(body);
+    if (body.generationConfig.thinkingConfig) {
+      return new Response(JSON.stringify({ error: { message: 'Thinking level is not supported for this model.' } }), { status: 400 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{"ok":true}' }] } }] }), { status: 200 });
+  };
+  assert.deepEqual(await generateJson('KEY', 'gemma-4-31b-it', 'p', fake), { ok: true });
+  assert.equal(bodies.length, 2);
+  assert.equal(bodies[1].generationConfig.thinkingConfig, undefined);
+  // Other errors aren't retried.
+  let calls = 0;
+  const denied = async () => { calls += 1; return new Response(JSON.stringify({ error: { message: 'API key not valid' } }), { status: 400 }); };
+  await assert.rejects(generateJson('KEY', 'gemini-3.8-flash', 'p', denied), /API key not valid/);
+  assert.equal(calls, 1);
 });
 
 test('REST calls send the key in a header, never in the URL', async () => {
