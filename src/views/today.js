@@ -3,6 +3,7 @@ import { h, replace } from '../lib/h.js';
 import { today, shortDate } from '../core/dates.js';
 import { pickTheme } from '../core/themes.js';
 import { generateTopics } from '../actions.js';
+import { levelLabel } from '../core/prompts.js';
 import { KeyForm } from './keyCard.js';
 import { LevelPicker } from './levelPicker.js';
 import { startSession } from './session.js';
@@ -93,7 +94,7 @@ export function Today(app) {
 
   const recent = d.sessions.slice(-3).reverse();
   return h('section', null,
-    h('div', { class: 'page-head' }, h('h1', null, 'Hoy'), h('div', { class: 'head-meta' }, `${d.settings.level} · ${shortDate(date)}`)),
+    h('div', { class: 'page-head' }, h('h1', null, 'Hoy'), h('div', { class: 'head-meta' }, `${levelLabel(d.settings.level)} · ${shortDate(date)}`)),
     interestsCard,
     questions,
     learn,

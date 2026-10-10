@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { systemPrompt, kickoff, summaryPrompt, topicsPrompt, transcriptText } from '../src/core/prompts.js';
 import { appendChunk, cleanTurns } from '../src/core/transcript.js';
 import { floatTo16, int16ToFloat, downsample, pcmToBase64, base64ToPcm, parseRate } from '../src/core/audio.js';
-import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, liveUrl, generateJson, listModels } from '../src/core/gemini.js';
-import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS } from '../src/core/store.js';
+import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels } from '../src/core/gemini.js';
+import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS } from '../src/core/store.js';
+import { saveSession } from '../src/actions.js';
 
 test('system prompt for 5 preguntas', () => {
   const p = systemPrompt({ activity: 'questions', theme: 'La comida', round: 2, previousQuestions: ['¿Qué desayunas?'], about: 'Vivo en Zamora.', recent: [{ date: '2026-09-20', label: 'Aprender algo: Le Corbusier' }] });
@@ -122,6 +123,79 @@ test('server message parsing', () => {
   assert.equal(parseServerMessage({ setupComplete: {} }).setupComplete, true);
   assert.equal(parseServerMessage({ serverContent: { interrupted: true } }).interrupted, true);
   assert.equal(parseServerMessage({ goAway: { timeLeft: '10s' } }).goAway, '10s');
+  assert.equal(e.usage, null);
+});
+
+test('server message parsing reads usage', () => {
+  // A message as the Live API sends it with turnComplete.
+  const e = parseServerMessage({
+    serverContent: { turnComplete: true },
+    usageMetadata: {
+      promptTokenCount: 437,
+      responseTokenCount: 96,
+      totalTokenCount: 533,
+      promptTokensDetails: [{ modality: 'TEXT', tokenCount: 312 }, { modality: 'AUDIO', tokenCount: 125 }],
+      responseTokensDetails: [{ modality: 'AUDIO', tokenCount: 96 }],
+    },
+  });
+  assert.equal(e.turnComplete, true);
+  assert.deepEqual(e.usage, {
+    input: { audio: 125, text: 312 },
+    output: { audio: 96, text: 0 },
+    promptTokenCount: 437,
+    responseTokenCount: 96,
+    thoughtsTokenCount: 0,
+    totalTokenCount: 533,
+  });
+  // Missing or broken counts are 0. A detail without a modality is text. Charla sends no images.
+  assert.deepEqual(parseUsage({
+    promptTokenCount: 'x',
+    thoughtsTokenCount: 7,
+    promptTokensDetails: [{ tokenCount: 5 }, { modality: 'IMAGE', tokenCount: 9 }, null, { modality: 'AUDIO', tokenCount: -3 }],
+    responseTokensDetails: 'none',
+  }), {
+    input: { audio: 0, text: 5 },
+    output: { audio: 0, text: 0 },
+    promptTokenCount: 0,
+    responseTokenCount: 0,
+    thoughtsTokenCount: 7,
+    totalTokenCount: 0,
+  });
+  assert.equal(parseUsage(undefined), null);
+  assert.equal(parseUsage('x'), null);
+});
+
+test('a saved session keeps its usage, and exports include it', () => {
+  const storage = memoryStorage();
+  const store = createStore(storage);
+  const usage = {
+    model: 'gemini-3.8-live', turns: 2, reports: 2,
+    input: { audio: 20, text: 26 }, output: { audio: 21, text: 0 },
+    promptTokenCount: 46, responseTokenCount: 21, thoughtsTokenCount: 0, totalTokenCount: 67,
+  };
+  saveSession(store, {
+    id: 'a', date: '2026-10-09', startedAt: '2026-10-09T10:00:00.000Z', seconds: 600,
+    activity: 'learn', topic: { interest: 'cine', title: 'Buñuel' }, transcript: [{ role: 'user', text: 'Hola' }], usage,
+  });
+  assert.deepEqual(store.data.sessions[0].usage, usage);
+  assert.deepEqual(createStore(storage).data.sessions[0].usage, usage, 'kept after a reload');
+  const exported = JSON.parse(JSON.stringify(store.exportData()));
+  assert.deepEqual(exported.sessions[0].usage, usage);
+});
+
+test('usage logs are kept for the last few sessions only, and the totals for all', () => {
+  const storage = memoryStorage();
+  const store = createStore(storage);
+  const log = [{ ms: 1200, turnComplete: true, usageMetadata: { promptTokenCount: 9, totalTokenCount: 20 } }];
+  store.update((x) => {
+    for (let i = 0; i < KEEP_USAGE_LOGS + 3; i++) {
+      x.sessions.push({ id: String(i), transcript: [], usage: { model: 'm', turns: 1, reports: 1, log: structuredClone(log) } });
+    }
+  });
+  const kept = createStore(storage).data.sessions;
+  assert.deepEqual(kept.map((s) => Boolean(s.usage?.log)), [false, false, false, true, true, true, true, true]);
+  assert.deepEqual(kept.at(-1).usage.log, log);
+  assert.ok(kept.every((s) => s.usage?.reports === 1), 'totals kept');
 });
 
 test('REST calls with a fake fetch', async () => {
@@ -133,10 +207,44 @@ test('REST calls with a fake fetch', async () => {
   };
   assert.equal((await listModels('KEY', fake)).length, MODELS.length);
   assert.deepEqual(await generateJson('KEY', 'gemini-3.5-flash', 'p', fake), { temas: [1, 2, 3] });
-  assert.match(calls[1].url, /models\/gemini-3\.5-flash:generateContent\?key=KEY/);
+  assert.match(calls[1].url, /models\/gemini-3\.5-flash:generateContent$/);
   assert.equal(JSON.parse(calls[1].init.body).generationConfig.responseMimeType, 'application/json');
   const bad = async () => new Response(JSON.stringify({ error: { message: 'API key not valid' } }), { status: 400 });
   await assert.rejects(listModels('x', bad), /API key not valid/);
+});
+
+test('REST calls send the key in a header, never in the URL', async () => {
+  const calls = [];
+  const fake = async (url, init) => {
+    calls.push({ url, init });
+    if (url.includes('/models?')) {
+      const page = calls.length === 1 ? { models: MODELS.slice(0, 2), nextPageToken: 'p2' } : { models: MODELS.slice(2) };
+      return new Response(JSON.stringify(page), { status: 200 });
+    }
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{}' }] } }] }), { status: 200 });
+  };
+  assert.equal((await listModels('SECRET-KEY', fake)).length, MODELS.length);
+  await generateJson('SECRET-KEY', 'models/gemini-3.5-flash', 'p', fake);
+  assert.equal(calls.length, 3);
+  assert.match(calls[1].url, /pageToken=p2/);
+  for (const c of calls) {
+    assert.ok(!c.url.includes('SECRET'), c.url);
+    assert.ok(!/[?&]key=/.test(c.url), c.url);
+    assert.equal(new Headers(c.init?.headers).get('x-goog-api-key'), 'SECRET-KEY');
+  }
+  assert.equal(new Headers(calls[2].init.headers).get('content-type'), 'application/json');
+  // The Live WebSocket can't take headers, so its key stays in the URL.
+  assert.match(liveUrl('SECRET-KEY'), /\?key=SECRET-KEY$/);
+});
+
+test('a model name from an imported file stays inside the models path', async () => {
+  const urls = [];
+  const fake = async (url) => {
+    urls.push(url);
+    return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: '{}' }] } }] }), { status: 200 });
+  };
+  await generateJson('KEY', '../../files', 'p', fake);
+  assert.equal(new URL(urls[0]).pathname, '/v1beta/models/..%2F..%2Ffiles:generateContent');
 });
 
 test('store: persistence, export without key, import keeps key, old transcripts dropped', () => {
@@ -158,6 +266,12 @@ test('store: persistence, export without key, import keeps key, old transcripts 
   assert.equal(c.data.settings.apiKey, 'OTHER');
   assert.ok(c.data.interests.includes('música'));
   assert.throws(() => c.importData({ app: 'verbos' }));
+  // A key added to a file by hand never replaces or fills in this device's key.
+  c.importData({ ...exp, settings: { ...exp.settings, apiKey: 'SOMEONE-ELSE' } });
+  assert.equal(c.data.settings.apiKey, 'OTHER');
+  const empty = createStore(memoryStorage());
+  empty.importData({ ...exp, settings: { ...exp.settings, apiKey: 'SOMEONE-ELSE' } });
+  assert.equal(empty.data.settings.apiKey, '');
   const d = createStore(memoryStorage());
   d.update((x) => {
     for (let i = 0; i < KEEP_TRANSCRIPTS + 5; i++) x.sessions.push({ id: String(i), transcript: [{ role: 'user', text: 'hola' }] });
@@ -184,4 +298,13 @@ test('level shapes the prompts', async () => {
 test('topicsPrompt lists rejected topics', () => {
   const p = topicsPrompt({ interests: ['viajes'], covered: [], rejected: ['La Sagrada Familia de Gaudí'] });
   assert.match(p, /no quiere estos temas[\s\S]*- La Sagrada Familia de Gaudí/);
+});
+
+test('old A1 to C2 levels move onto Fácil, Medio and Difícil', async () => {
+  const { simpleLevel, levelLabel } = await import('../src/core/prompts.js');
+  assert.deepEqual(['A1', 'A2', 'B1', 'B2', 'C1', 'C2', undefined].map(simpleLevel), ['A2', 'A2', 'B1', 'B2', 'B2', 'B2', 'A2']);
+  assert.equal(levelLabel('C1'), 'Difícil');
+  const storage = memoryStorage();
+  storage.setItem(KEY, JSON.stringify({ settings: { level: 'C2' } }));
+  assert.equal(createStore(storage).data.settings.level, 'B2');
 });

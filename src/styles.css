@@ -303,3 +303,4 @@ body.quiz-mode .top, body.session-mode .top { display: grid; }
 }
 .pick[aria-pressed="true"] { background: var(--text); border-color: var(--text); color: var(--bg); }
 @media (min-width: 760px) { .picks { flex-wrap: wrap; margin: 12px 0 0; padding: 0; overflow: visible; } }
+.choices { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }

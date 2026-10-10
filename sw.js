@@ -23,6 +23,7 @@ const PRECACHE = [
   "src/lib/apps.js",
   "src/lib/h.js",
   "src/live/capture-worklet.js",
+  "src/live/page.js",
   "src/live/session.js",
   "src/main.js",
   "src/styles.css",
