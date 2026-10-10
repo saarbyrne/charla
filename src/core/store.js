@@ -1,6 +1,7 @@
 // @ts-check
 /** All app data in one localStorage key. */
 import { defaultThemes } from './themes.js';
+import { simpleLevel } from './prompts.js';
 
 /** @typedef {import('./themes.js').Theme} Theme */
 /** @typedef {import('./transcript.js').Turn} Turn */
@@ -12,6 +13,20 @@ import { defaultThemes } from './themes.js';
  * @property {string} resumen
  * @property {{ es: string, en: string }[]} vocabulario
  * @property {{ dije: string, mejor: string }[]} correcciones
+ */
+
+/**
+ * One usage report as the server sent it, with the time since the session
+ * started and whether the message also ended a model turn.
+ * @typedef {{ ms: number, turnComplete: boolean, usageMetadata: unknown }} UsageLogEntry
+ */
+
+/**
+ * Gemini usage for one live session: the usageMetadata reports added up
+ * (see addUsage in live/session.js), the live model, the number of model turns
+ * (turnComplete) and the number of messages that carried usage. `log` holds
+ * the reports themselves, for the last KEEP_USAGE_LOGS sessions only.
+ * @typedef {import('./gemini.js').UsageReport & { model: string, turns: number, reports: number, log?: UsageLogEntry[] }} SessionUsage
  */
 
 /**
@@ -28,6 +43,7 @@ import { defaultThemes } from './themes.js';
  * @property {Turn[]} transcript
  * @property {Summary | null} summary
  * @property {string} [summaryError]
+ * @property {SessionUsage} [usage]  missing on sessions saved before usage was recorded
  */
 
 /**
@@ -37,7 +53,7 @@ import { defaultThemes } from './themes.js';
  * @property {string} textModel
  * @property {string} voice
  * @property {string} about
- * @property {string} level      A1 to C2
+ * @property {string} level      A2 (Fácil), B1 (Medio) or B2 (Difícil)
  * @property {string[]} [liveModels]
  * @property {string[]} [textModels]
  */
@@ -57,6 +73,8 @@ export const KEY = 'charla:data';
 export const SCHEMA_VERSION = 1;
 /** Transcripts are kept for this many recent sessions; older ones keep only the summary. */
 export const KEEP_TRANSCRIPTS = 60;
+/** Usage logs are kept for this many recent sessions; older ones keep only the totals. */
+export const KEEP_USAGE_LOGS = 5;
 
 export const DEFAULT_INTERESTS = [
   'fútbol', 'filosofía', 'diseño', 'arquitectura', 'urbanismo', 'periodismo',
@@ -83,7 +101,7 @@ export function migrate(stored) {
   return {
     ...base,
     ...stored,
-    settings: { ...base.settings, ...(stored.settings ?? {}) },
+    settings: { ...base.settings, ...(stored.settings ?? {}), level: simpleLevel(stored.settings?.level) },
     day: { ...base.day, ...(stored.day ?? {}) },
     schemaVersion: SCHEMA_VERSION,
   };
@@ -120,9 +138,11 @@ export function createStore(storage = safeStorage()) {
   }
 
   function save() {
-    // Drop old transcripts first so the data stays well under the storage limit.
+    // Drop old transcripts and usage logs first so the data stays well under
+    // the storage limit.
     data.sessions.forEach((s, i) => {
       if (i < data.sessions.length - KEEP_TRANSCRIPTS) s.transcript = [];
+      if (i < data.sessions.length - KEEP_USAGE_LOGS && s.usage?.log) delete s.usage.log;
     });
     try {
       storage.setItem(KEY, JSON.stringify(data));
@@ -150,10 +170,13 @@ export function createStore(storage = safeStorage()) {
       if (!incoming || incoming.app !== 'charla') throw new Error('No es una copia de Charla');
       if (typeof incoming.schemaVersion !== 'number' || incoming.schemaVersion > SCHEMA_VERSION) throw new Error('Versión no compatible');
       if (!Array.isArray(incoming.themes) || !Array.isArray(incoming.sessions)) throw new Error('Datos incompletos');
+      // Keep this device's key. Exports never include one, so a key in the file
+      // was added by hand, and it would send the conversations to someone
+      // else's Google project.
       const key = data.settings.apiKey;
       const { app, exportedAt, ...rest } = incoming;
       data = migrate(rest);
-      if (!data.settings.apiKey) data.settings.apiKey = key;
+      data.settings.apiKey = key;
       save();
     },
   };

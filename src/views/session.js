@@ -1,6 +1,7 @@
 // @ts-check
 import { h, replace } from '../lib/h.js';
 import { LiveSession } from '../live/session.js';
+import { keepScreenOn, watchLeave } from '../live/page.js';
 import { systemPrompt, kickoff } from '../core/prompts.js';
 import { today } from '../core/dates.js';
 import { saveSession, summarise, recentForPrompt } from '../actions.js';
@@ -64,8 +65,10 @@ export function Session(app) {
   let startedAt = 0;
   /** @type {ReturnType<typeof setInterval> | undefined} */
   let timer;
-  /** @type {any} */
-  let wakeLock = null;
+  /** Lets the screen turn off again. */
+  let releaseScreen = () => {};
+  /** Stops ending the session when the person leaves. */
+  let stopWatching = () => {};
   let finished = false;
 
   const statusEl = h('div', { class: 'status-line' });
@@ -125,19 +128,40 @@ export function Session(app) {
       const { reason } = /** @type {CustomEvent} */ (e).detail;
       finish(reason);
     });
+    // Going to another screen (back link, browser back) or closing the page
+    // ends the session and saves it. Hiding the page (another app or tab, a
+    // locked screen) stops sending sound to Gemini at once. After a minute
+    // hidden, the session ends and is saved, which turns the microphone off.
+    // The screen lock lapses while the page is hidden, so coming back asks
+    // for it again.
+    stopWatching = watchLeave(() => {
+      live?.stop();
+      finish(null);
+    }, {
+      here: () => location.hash.startsWith('#/sesion'),
+      pause: () => live?.setPaused(true),
+      resume: () => {
+        live?.setPaused(false);
+        if (startedAt) holdScreen();
+      },
+    });
     try {
       await live.start();
+      // The session can end while the browser asks for the microphone.
+      if (finished) return;
       startedAt = Date.now();
       timer = setInterval(() => replace(timeEl, duration(Math.floor((Date.now() - startedAt) / 1000))), 500);
-      try {
-        wakeLock = await /** @type {any} */ (navigator).wakeLock?.request('screen');
-      } catch {
-        /* not supported */
-      }
+      holdScreen();
     } catch (err) {
       live?.stop();
       finish(String(/** @type {Error} */ (err).message ?? err));
     }
+  }
+
+  /** Keep the screen on, replacing any earlier lock. */
+  function holdScreen() {
+    releaseScreen();
+    releaseScreen = keepScreenOn();
   }
 
   muteBtn.addEventListener('click', () => {
@@ -156,7 +180,8 @@ export function Session(app) {
     if (finished) return;
     finished = true;
     clearInterval(timer);
-    wakeLock?.release?.().catch?.(() => {});
+    stopWatching();
+    releaseScreen();
     plan = null;
     const seconds = startedAt ? Math.round((Date.now() - startedAt) / 1000) : 0;
     const transcript = live?.transcript ?? [];
@@ -180,6 +205,7 @@ export function Session(app) {
       round: p.round,
       topic: p.topic,
       transcript,
+      usage: live ? JSON.parse(JSON.stringify({ ...live.usage, log: live.usageLog })) : undefined,
     });
     const body = h('div', { class: 'card' }, h('div', { class: 'sub loading' }, 'Preparando el resumen…'));
     replace(root, head(),
@@ -196,17 +222,6 @@ export function Session(app) {
       replace(body, h('div', { class: 'msg bad' }, `Sin resumen: ${String(/** @type {Error} */ (err).message ?? err)}`));
     }
   }
-
-  // Leaving the screen (back link, apps panel, browser back) ends the session and saves it.
-  const onLeave = () => {
-    if (location.hash.startsWith('#/sesion')) return;
-    window.removeEventListener('hashchange', onLeave);
-    if (live && !finished) {
-      live.stop();
-      finish(null);
-    }
-  };
-  window.addEventListener('hashchange', onLeave);
 
   if (p.ctx) {
     begin();

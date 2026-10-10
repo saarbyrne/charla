@@ -1,25 +1,25 @@
 // @ts-check
 import { h, replace } from '../lib/h.js';
-import { LEVELS } from '../core/prompts.js';
+import { LEVEL_CHOICES } from '../core/prompts.js';
 
 /** @typedef {import('../app.js').App} App */
 
 /**
- * Level buttons, A1 to C2. Changing the level also refreshes today's topics.
+ * Fácil, Medio or Difícil. Changing the level also refreshes today's topics.
  * @param {App} app
  */
 export function LevelPicker(app) {
-  const box = h('div', { class: 'segmented levels', role: 'group', 'aria-label': 'Nivel' });
+  const box = h('div', { class: 'choices', role: 'group', 'aria-label': 'Nivel' });
   const render = () => {
     const current = app.store.data.settings.level;
-    replace(box, LEVELS.map((l) =>
+    replace(box, LEVEL_CHOICES.map((c) =>
       h('button', {
-        type: 'button', class: l === current ? 'on' : '', 'aria-pressed': String(l === current),
+        type: 'button', class: 'pick', 'aria-pressed': String(c.value === current),
         onclick: () => {
-          app.store.update((d) => { d.settings.level = l; d.day.topics = []; });
+          app.store.update((d) => { d.settings.level = c.value; d.day.topics = []; });
           render();
         },
-      }, l)));
+      }, c.label)));
   };
   render();
   return box;

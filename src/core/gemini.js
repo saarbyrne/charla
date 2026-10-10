@@ -11,6 +11,14 @@ export const VOICES = ['', 'Kore', 'Aoede', 'Leda', 'Zephyr', 'Puck', 'Charon', 
 /** @typedef {{ name: string, displayName?: string, supportedGenerationMethods?: string[] }} Model */
 
 /**
+ * REST calls send the key in this header, never in the URL, as Google's JS SDK
+ * does. URLs end up in places headers don't, such as proxy logs, error
+ * messages and the list of requests that any script on the page can read.
+ * @param {string} key
+ */
+const keyHeader = (key) => ({ 'x-goog-api-key': key });
+
+/**
  * @param {string} key
  * @param {typeof fetch} [fetchFn]
  * @returns {Promise<Model[]>}
@@ -20,8 +28,8 @@ export async function listModels(key, fetchFn = fetch) {
   const out = [];
   let token = '';
   for (let i = 0; i < 5; i++) {
-    const url = `${API}/models?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}&key=${encodeURIComponent(key)}`;
-    const res = await fetchFn(url);
+    const url = `${API}/models?pageSize=1000${token ? `&pageToken=${encodeURIComponent(token)}` : ''}`;
+    const res = await fetchFn(url, { headers: keyHeader(key) });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
     out.push(...(body.models ?? []));
@@ -87,9 +95,11 @@ export function parseJson(text) {
  * @param {typeof fetch} [fetchFn]
  */
 export async function generateJson(key, model, prompt, fetchFn = fetch, temperature = 0.7) {
-  const res = await fetchFn(`${API}/models/${model}:generateContent?key=${encodeURIComponent(key)}`, {
+  // The model name can come from an imported file, so it is encoded: a name
+  // like "../x" can't send the key to another path on Google's server.
+  const res = await fetchFn(`${API}/models/${encodeURIComponent(bare(model))}:generateContent`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...keyHeader(key) },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { responseMimeType: 'application/json', temperature },
@@ -101,7 +111,12 @@ export async function generateJson(key, model, prompt, fetchFn = fetch, temperat
   return parseJson(text);
 }
 
-/** @param {string} key */
+/**
+ * The Live API WebSocket address. Here the key has to stay in the URL, because
+ * browsers can't set headers on a WebSocket. Google's JS SDK does the same.
+ * Short-lived tokens from Hecho's server will replace the key.
+ * @param {string} key
+ */
 export function liveUrl(key) {
   return `${LIVE_URL}?key=${encodeURIComponent(key)}`;
 }
@@ -131,6 +146,56 @@ export const textMessage = (text) => ({ realtimeInput: { text } });
 export const audioMessage = (base64) => ({ realtimeInput: { audio: { data: base64, mimeType: INPUT_MIME } } });
 
 /**
+ * One usageMetadata report from the Live API. Missing counts are 0.
+ * @typedef {object} UsageReport
+ * @property {{ audio: number, text: number }} input   promptTokensDetails, by modality
+ * @property {{ audio: number, text: number }} output  responseTokensDetails, by modality
+ * @property {number} promptTokenCount
+ * @property {number} responseTokenCount
+ * @property {number} thoughtsTokenCount  thinking models only, billed as output
+ * @property {number} totalTokenCount
+ */
+
+/** @param {unknown} n */
+const count = (n) => {
+  const v = Number(n);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+};
+
+/**
+ * Split a details list, [{ modality, tokenCount }], into audio and text.
+ * Charla only sends and receives audio and text. A missing modality counts as
+ * text, as in Google's SDK.
+ * @param {unknown} details
+ */
+function byModality(details) {
+  const out = { audio: 0, text: 0 };
+  for (const d of Array.isArray(details) ? details : []) {
+    const n = count(d?.tokenCount);
+    const modality = d?.modality ?? 'MODALITY_UNSPECIFIED';
+    if (modality === 'AUDIO') out.audio += n;
+    else if (modality === 'TEXT' || modality === 'MODALITY_UNSPECIFIED') out.text += n;
+  }
+  return out;
+}
+
+/**
+ * @param {any} u the usageMetadata field of a server message
+ * @returns {UsageReport | null}
+ */
+export function parseUsage(u) {
+  if (!u || typeof u !== 'object') return null;
+  return {
+    input: byModality(u.promptTokensDetails),
+    output: byModality(u.responseTokensDetails),
+    promptTokenCount: count(u.promptTokenCount),
+    responseTokenCount: count(u.responseTokenCount),
+    thoughtsTokenCount: count(u.thoughtsTokenCount),
+    totalTokenCount: count(u.totalTokenCount),
+  };
+}
+
+/**
  * @typedef {object} ServerEvent
  * @property {boolean} setupComplete
  * @property {{ data: string, mimeType: string }[]} audio
@@ -140,6 +205,7 @@ export const audioMessage = (base64) => ({ realtimeInput: { audio: { data: base6
  * @property {boolean} turnComplete
  * @property {string | null} goAway
  * @property {string | null} error
+ * @property {UsageReport | null} usage
  */
 
 /**
@@ -161,5 +227,6 @@ export function parseServerMessage(msg) {
     turnComplete: Boolean(sc.turnComplete),
     goAway: msg?.goAway ? String(msg.goAway.timeLeft ?? '') : null,
     error: msg?.error ? String(msg.error.message ?? msg.error) : null,
+    usage: parseUsage(msg?.usageMetadata),
   };
 }

@@ -30,6 +30,27 @@ export const LEVEL_GUIDE = {
   C2: 'Mi nivel es C2 (casi nativo). Habla como con un hablante nativo.',
 };
 
+/** The three levels shown in hecho, and the level the AI is told for each. */
+export const LEVEL_CHOICES = [
+  { value: 'A2', label: 'Fácil' },
+  { value: 'B1', label: 'Medio' },
+  { value: 'B2', label: 'Difícil' },
+];
+
+/**
+ * Move an old A1 to C2 setting onto the three levels.
+ * @param {string | undefined} level
+ * @returns {'A2'|'B1'|'B2'}
+ */
+export function simpleLevel(level) {
+  if (level === 'B1') return 'B1';
+  if (level === 'B2' || level === 'C1' || level === 'C2') return 'B2';
+  return 'A2';
+}
+
+/** @param {string | undefined} level */
+export const levelLabel = (level) => LEVEL_CHOICES.find((c) => c.value === simpleLevel(level))?.label ?? 'Fácil';
+
 /** @param {string | undefined} level */
 export const levelGuide = (level) => LEVEL_GUIDE[/** @type {Level} */ (level)] ?? LEVEL_GUIDE.A2;
 
