@@ -89,6 +89,20 @@ export function parseJson(text) {
 }
 
 /**
+ * Thinking for summaries and topics. Most of their cost was thinking tokens:
+ * 8.7K output tokens for two summaries and one topic list on 10 October. Flash
+ * models think at "medium" by default, so they're asked for "low". Lite models
+ * already think little or not at all, and "low" would turn thinking on for some
+ * of them, so they get no setting. Levels per model:
+ * ai.google.dev/gemini-api/docs/thinking.
+ * @param {string} model
+ * @returns {{ thinkingLevel: string } | undefined}
+ */
+export function textThinking(model) {
+  return /lite/.test(model) ? undefined : { thinkingLevel: 'low' };
+}
+
+/**
  * @param {string} key
  * @param {string} model
  * @param {string} prompt
@@ -97,15 +111,23 @@ export function parseJson(text) {
 export async function generateJson(key, model, prompt, fetchFn = fetch, temperature = 0.7) {
   // The model name can come from an imported file, so it is encoded: a name
   // like "../x" can't send the key to another path on Google's server.
-  const res = await fetchFn(`${API}/models/${encodeURIComponent(bare(model))}:generateContent`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...keyHeader(key) },
-    body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: 'application/json', temperature },
-    }),
-  });
-  const body = await res.json().catch(() => ({}));
+  const url = `${API}/models/${encodeURIComponent(bare(model))}:generateContent`;
+  /** @param {{ thinkingLevel: string } | undefined} thinkingConfig */
+  const call = async (thinkingConfig) => {
+    const res = await fetchFn(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...keyHeader(key) },
+      body: JSON.stringify({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { responseMimeType: 'application/json', temperature, ...(thinkingConfig ? { thinkingConfig } : {}) },
+      }),
+    });
+    return { res, body: await res.json().catch(() => ({})) };
+  };
+  const thinking = textThinking(bare(model));
+  let { res, body } = await call(thinking);
+  // A model that doesn't take the thinking setting answers 400. Ask again without it.
+  if (thinking && res.status === 400 && /thinking/i.test(body?.error?.message ?? '')) ({ res, body } = await call(undefined));
   if (!res.ok) throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
   const text = (body.candidates?.[0]?.content?.parts ?? []).map((/** @type {any} */ p) => p.text ?? '').join('');
   return parseJson(text);
@@ -122,6 +144,33 @@ export function liveUrl(key) {
 }
 
 /**
+ * How long a pause has to last before Gemini takes its turn. Learners stop to
+ * think in the middle of a sentence. Google's default is about 800 ms, and in
+ * the test sessions on 10 October it cut Saar off twice mid-answer.
+ */
+export const LEARNER_SILENCE_MS = 1500;
+
+/**
+ * Turn-taking for learners: a longer pause before the reply, and low
+ * sensitivity to the end of speech, so a short pause doesn't end the turn.
+ * See ai.google.dev/gemini-api/docs/live-api/capabilities.
+ */
+export const LEARNER_TURNS = {
+  automaticActivityDetection: {
+    endOfSpeechSensitivity: 'END_SENSITIVITY_LOW',
+    silenceDurationMs: LEARNER_SILENCE_MS,
+  },
+};
+
+/**
+ * A hint for Google's transcript of what the learner says. Without it Google
+ * guesses the language, and in a test session on 10 October it wrote a German
+ * word for a Spanish answer. The transcript feeds the summary after the
+ * session. See AudioTranscriptionConfig in ai.google.dev/api/live.
+ */
+export const LEARNER_TRANSCRIPTION = { languageCodes: ['es-ES'] };
+
+/**
  * @param {{ model: string, systemPrompt: string, voice?: string }} p
  */
 export function setupMessage({ model, systemPrompt, voice }) {
@@ -133,7 +182,8 @@ export function setupMessage({ model, systemPrompt, voice }) {
       model: `models/${bare(model)}`,
       generationConfig,
       systemInstruction: { parts: [{ text: systemPrompt }] },
-      inputAudioTranscription: {},
+      realtimeInputConfig: LEARNER_TURNS,
+      inputAudioTranscription: LEARNER_TRANSCRIPTION,
       outputAudioTranscription: {},
     },
   };

@@ -1,8 +1,10 @@
 // @ts-check
 import { h, replace } from '../lib/h.js';
 import { LiveSession } from '../live/session.js';
+import { PipelineSession } from '../live/pipeline.js';
+import { unlockDeviceVoice } from '../live/device-voice.js';
 import { keepScreenOn, watchLeave } from '../live/page.js';
-import { systemPrompt, kickoff } from '../core/prompts.js';
+import { systemPrompt, kickoff, questionNote } from '../core/prompts.js';
 import { today } from '../core/dates.js';
 import { saveSession, summarise, recentForPrompt } from '../actions.js';
 import { duration } from './format.js';
@@ -24,6 +26,15 @@ import { SummaryBlock } from './history.js';
 /** @type {Plan | null} */
 let plan = null;
 
+/**
+ * What runs the conversation. 'pipeline' (live/pipeline.js) costs about $0.04
+ * for 8 minutes. 'live' is the Gemini Live API, which bills every turn for the
+ * whole session so far and costs about $0.45 for 8 minutes (estimates from
+ * 10 October 2026).
+ * @type {'pipeline' | 'live'}
+ */
+export const VOICE_ENGINE = 'pipeline';
+
 /** @param {Plan} p */
 export function startSession(p) {
   // Create the audio context inside the tap, so the session can start without a second tap.
@@ -36,6 +47,9 @@ export function startSession(p) {
   } catch {
     ctx = undefined;
   }
+  // The device's voice stands in when Google refuses its voice, and iOS only
+  // lets it speak later if it has spoken during a tap.
+  if (VOICE_ENGINE === 'pipeline') unlockDeviceVoice();
   plan = { ...p, ctx };
   location.hash = `#/sesion?r=${Date.now()}`;
 }
@@ -44,6 +58,7 @@ const STATUS = {
   idle: 'Listo',
   connecting: 'Conectando…',
   listening: 'Te escucho',
+  thinking: 'Pensando…',
   speaking: 'Hablando',
   closed: 'Terminado',
 };
@@ -60,7 +75,7 @@ export function Session(app) {
   const title = p.activity === 'questions' ? p.themeName : p.topic?.title;
   const eyebrow = p.activity === 'questions' ? `5 preguntas · Ronda ${p.round} de 3` : `Aprender algo · ${p.topic?.interest}`;
 
-  /** @type {LiveSession | null} */
+  /** @type {LiveSession | PipelineSession | null} */
   let live = null;
   let startedAt = 0;
   /** @type {ReturnType<typeof setInterval> | undefined} */
@@ -103,23 +118,32 @@ export function Session(app) {
     setStatus('connecting');
     const d = store.data;
     const theme = d.themes.find((t) => t.id === p.themeId);
-    live = new LiveSession({
-      apiKey: d.settings.apiKey,
-      model: d.settings.liveModel,
-      voice: d.settings.voice,
-      systemPrompt: systemPrompt({
-        activity: p.activity,
-        theme: p.themeName,
-        round: p.round,
-        previousQuestions: theme?.questions ?? [],
-        topic: p.topic,
-        about: d.settings.about,
-        level: d.settings.level,
-        recent: recentForPrompt(store),
-      }),
-      kickoff: kickoff(p.activity, p.topic),
-      ctx: p.ctx,
+    const prompt = systemPrompt({
+      activity: p.activity,
+      theme: p.themeName,
+      round: p.round,
+      previousQuestions: theme?.questions ?? [],
+      topic: p.topic,
+      about: d.settings.about,
+      level: d.settings.level,
+      recent: recentForPrompt(store),
     });
+    live = VOICE_ENGINE === 'pipeline'
+      ? new PipelineSession({
+        apiKey: d.settings.apiKey,
+        systemPrompt: prompt,
+        kickoff: kickoff(p.activity, p.topic),
+        ctx: p.ctx,
+        turnNote: p.activity === 'questions' ? questionNote : undefined,
+      })
+      : new LiveSession({
+        apiKey: d.settings.apiKey,
+        model: d.settings.liveModel,
+        voice: d.settings.voice,
+        systemPrompt: prompt,
+        kickoff: kickoff(p.activity, p.topic),
+        ctx: p.ctx,
+      });
     live.addEventListener('status', (e) => setStatus(/** @type {CustomEvent} */ (e).detail));
     live.addEventListener('transcript', (e) => renderTranscript(/** @type {CustomEvent} */ (e).detail));
     live.addEventListener('error', (e) => replace(errorEl, String(/** @type {CustomEvent} */ (e).detail)));

@@ -26,7 +26,10 @@ import { simpleLevel } from './prompts.js';
  * (see addUsage in live/session.js), the live model, the number of model turns
  * (turnComplete) and the number of messages that carried usage. `log` holds
  * the reports themselves, for the last KEEP_USAGE_LOGS sessions only.
- * @typedef {import('./gemini.js').UsageReport & { model: string, turns: number, reports: number, log?: UsageLogEntry[] }} SessionUsage
+ * A pipeline session (live/pipeline.js) also says so in `engine`, with the
+ * seconds of speech and the cost in dollars at list prices. `deviceReplies`
+ * counts the replies the device's own voice said because Google refused.
+ * @typedef {import('./gemini.js').UsageReport & { model: string, turns: number, reports: number, log?: UsageLogEntry[], engine?: 'live' | 'pipeline', speechSeconds?: number, cost?: number, deviceReplies?: number }} SessionUsage
  */
 
 /**

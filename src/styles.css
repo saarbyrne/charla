@@ -173,7 +173,7 @@ select.input { appearance: auto; }
 .live-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
 .status-line { display: flex; align-items: center; gap: 8px; font-weight: 550; }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
-.dot.connecting { background: var(--warn); animation: pulse 1s infinite; }
+.dot.connecting, .dot.thinking { background: var(--warn); animation: pulse 1s infinite; }
 .dot.listening { background: var(--ok); }
 .dot.speaking { background: var(--accent); animation: pulse 0.8s infinite; }
 .timer { font-variant-numeric: tabular-nums; color: var(--muted); }

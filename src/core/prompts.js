@@ -62,7 +62,9 @@ Reglas:
 - Adapta las preguntas, el vocabulario y la velocidad a mi nivel.
 - Si no entiendo algo, repítelo con palabras más sencillas.
 - No me corrijas durante la conversación, salvo que yo lo pida. Queremos que la conversación fluya.
-- Sé breve en cada turno. Deja que yo hable más que tú.`;
+- Sé breve en cada turno. Deja que yo hable más que tú.
+- Hago pausas para pensar. Si mi frase parece sin terminar, por ejemplo si acaba en «pero», «y» o «porque», di solo «¿Sí?» o «Sigue» y espera.
+- Si no entiendes lo que digo, pídeme que lo repita. No me pidas que hable en español, salvo que diga una frase entera en otro idioma.`;
 
 /**
  * @param {{
@@ -84,10 +86,11 @@ export function systemPrompt(p) {
     const prev = (p.previousQuestions ?? []).slice(-15);
     parts.push(`Actividad de hoy: 5 preguntas.
 Tema: ${p.theme}. Es la ronda ${p.round ?? 1} de 3 con este tema.
-- Prepara 5 preguntas sobre el tema.
+- Prepara 5 preguntas sobre el tema antes de empezar, y hazlas en ese orden.
 - Di el tema y haz solo la primera pregunta.
+- Di el número de cada pregunta: primera, segunda, tercera, cuarta y quinta. Usa cada número una sola vez.
 - No hagas la siguiente pregunta hasta que yo diga «siguiente pregunta».
-- Entre preguntas, comenta mi respuesta o hazme una pregunta corta para seguir la conversación.
+- Entre preguntas, comenta mi respuesta o hazme una pregunta corta para seguir la conversación. Esas preguntas cortas no tienen número y no cuentan como una de las 5.
 - Después de la quinta pregunta, despídete de forma breve.${prev.length ? `
 Preguntas que ya hicimos con este tema. No las repitas. Haz preguntas un poco diferentes:
 ${prev.map((q) => `- ${q}`).join('\n')}` : ''}`);
@@ -99,6 +102,27 @@ Tema elegido: ${p.topic?.title} (${p.topic?.interest}).
 - Si me quedo callado, hazme una pregunta sencilla sobre el tema.`);
   }
   return parts.join('\n\n');
+}
+
+const ORDINALS = ['primera', 'segunda', 'tercera', 'cuarta', 'quinta'];
+
+/** @param {string} text */
+const asksNext = (text) => /siguiente\s+pregunta/.test(text.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''));
+
+/**
+ * Where the 5 questions are, added to the instructions on each turn of a
+ * pipeline session (live/pipeline.js). charla counts the learner's «siguiente
+ * pregunta», so the model doesn't have to remember. In the voice test on
+ * 10 October, Flash-Lite asked the fourth question without waiting for it.
+ * @param {{ role: 'user' | 'model', text: string }[]} history  the conversation before this turn
+ */
+export function questionNote(history) {
+  if (!history.length) return '\n\nAhora: di el tema y haz la primera pregunta.';
+  const n = 1 + history.filter((m) => m.role === 'user' && asksNext(m.text)).length;
+  const comment = 'comenta lo que digo o hazme una pregunta corta sobre ello';
+  if (n > 5) return `\n\nAhora: ya hemos hecho las 5 preguntas. No hagas más preguntas con número. ${comment[0].toUpperCase()}${comment.slice(1)}, o despídete si me despido.`;
+  if (n === 5) return `\n\nAhora: vamos por la quinta y última pregunta. Si en este turno digo «siguiente pregunta», dime que ya hemos hecho las 5 y despídete de forma breve. Si no, ${comment}.`;
+  return `\n\nAhora: vamos por la ${ORDINALS[n - 1]} pregunta. Si en este turno digo «siguiente pregunta», haz la ${ORDINALS[n]} pregunta. Si no, no hagas una pregunta nueva con número: ${comment}.`;
 }
 
 /** First message that makes the model start speaking. @param {'questions'|'learn'} activity @param {Topic} [topic] */
