@@ -5,7 +5,7 @@ import { appendChunk, cleanTurns } from '../src/core/transcript.js';
 import { floatTo16, int16ToFloat, downsample, pcmToBase64, base64ToPcm, parseRate } from '../src/core/audio.js';
 import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels, textThinking, LEARNER_SILENCE_MS } from '../src/core/gemini.js';
 import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS, IMPORT_LIMITS } from '../src/core/store.js';
-import { saveSession } from '../src/actions.js';
+import { saveSession, generateTopics, topicsRequester, TOPICS_WAIT_MS } from '../src/actions.js';
 
 test('system prompt for 5 preguntas', () => {
   const p = systemPrompt({ activity: 'questions', theme: 'La comida', round: 2, previousQuestions: ['¿Qué desayunas?'], about: 'Vivo en Zamora.', recent: [{ date: '2026-09-20', label: 'Aprender algo: Le Corbusier' }] });
@@ -499,6 +499,94 @@ test('a copy far bigger than real use is refused', () => {
   const sprawl = goodCopy();
   sprawl.sessions[0].usage = { log: Array.from({ length: IMPORT_LIMITS.nodes + 1 }, () => 0) };
   assert.throws(() => store.importData(sprawl), /Copia demasiado grande/, 'too many values in all');
+});
+
+/** A clock that only moves when the test says so. */
+function fakeTimers() {
+  let time = 0;
+  let next = 1;
+  const timers = new Map();
+  return {
+    setTimeout(fn, ms) { timers.set(next, { at: time + ms, fn }); return next++; },
+    clearTimeout(id) { timers.delete(id); },
+    advance(ms) {
+      time += ms;
+      for (const [id, t] of [...timers]) {
+        if (t.at <= time) { timers.delete(id); t.fn(); }
+      }
+    },
+  };
+}
+
+/** A stand-in for generateTopics whose answers the test releases one by one. */
+function fakeGenerate() {
+  const asked = [];
+  const generate = (store, isCurrent) => new Promise((resolve) => {
+    asked.push({ isCurrent, answer: () => resolve([]) });
+  });
+  return { asked, generate };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('topics are asked for once the taps stop', async () => {
+  const clock = fakeTimers();
+  const { asked, generate } = fakeGenerate();
+  const ask = topicsRequester(createStore(memoryStorage()), { generate, clock });
+  let drawn = 0;
+  for (let i = 0; i < 5; i++) {
+    ask(() => drawn++, TOPICS_WAIT_MS);
+    clock.advance(TOPICS_WAIT_MS - 1);
+  }
+  assert.equal(asked.length, 0, 'still waiting while the taps keep coming');
+  clock.advance(1);
+  assert.equal(asked.length, 1, 'one request after the last tap');
+  asked[0].answer();
+  await settle();
+  assert.equal(drawn, 1);
+  clock.advance(TOPICS_WAIT_MS * 3);
+  assert.equal(asked.length, 1, 'nothing more is scheduled');
+});
+
+test('an answer for older picks is ignored', async () => {
+  const clock = fakeTimers();
+  const { asked, generate } = fakeGenerate();
+  const ask = topicsRequester(createStore(memoryStorage()), { generate, clock });
+  const drawn = [];
+  ask(() => drawn.push('first'), TOPICS_WAIT_MS);
+  clock.advance(TOPICS_WAIT_MS);
+  ask(() => drawn.push('second'), TOPICS_WAIT_MS);
+  assert.equal(asked[0].isCurrent(), false, 'the request on its way is stale as soon as the picks change');
+  clock.advance(TOPICS_WAIT_MS);
+  assert.equal(asked.length, 2);
+  assert.equal(asked[1].isCurrent(), true);
+  asked[1].answer();
+  asked[0].answer();
+  await settle();
+  assert.deepEqual(drawn, ['second']);
+});
+
+test('asking at once replaces a request that is still waiting', async () => {
+  const clock = fakeTimers();
+  const { asked, generate } = fakeGenerate();
+  const ask = topicsRequester(createStore(memoryStorage()), { generate, clock });
+  let drawn = 0;
+  ask(() => drawn++, TOPICS_WAIT_MS);
+  ask(() => drawn++);
+  assert.equal(asked.length, 1, 'no wait when none is given');
+  clock.advance(TOPICS_WAIT_MS * 2);
+  assert.equal(asked.length, 1, 'the waiting request was dropped');
+  asked[0].answer();
+  await settle();
+  assert.equal(drawn, 1);
+});
+
+test('topics for old picks are not saved', async () => {
+  const store = createStore(memoryStorage());
+  await generateTopics(store, () => false);
+  assert.equal(store.data.day.topics.length, 0);
+  await generateTopics(store);
+  assert.equal(store.data.day.topics.length, 3);
 });
 
 test('level shapes the prompts', async () => {
