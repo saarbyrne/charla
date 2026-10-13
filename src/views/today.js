@@ -2,7 +2,7 @@
 import { h, replace } from '../lib/h.js';
 import { today, shortDate } from '../core/dates.js';
 import { pickTheme } from '../core/themes.js';
-import { topicsRequester, TOPICS_WAIT_MS } from '../actions.js';
+import { sharedTopicsRequester, TOPICS_WAIT_MS } from '../actions.js';
 import { levelLabel } from '../core/prompts.js';
 import { KeyForm } from './keyCard.js';
 import { LevelPicker } from './levelPicker.js';
@@ -63,7 +63,7 @@ export function Today(app) {
     : null;
 
   const topicList = h('div', { class: 'topics' });
-  const askTopics = topicsRequester(store);
+  const askTopics = sharedTopicsRequester(store);
   /** @param {number} [wait]  ms to wait for more taps before asking for topics */
   const renderTopics = (wait = 0) => {
     const topics = store.data.day.topics;

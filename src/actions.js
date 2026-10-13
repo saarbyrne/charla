@@ -101,6 +101,20 @@ export function topicsRequester(store, { generate = generateTopics, clock = glob
   };
 }
 
+/** @type {WeakMap<Store, ReturnType<typeof topicsRequester>>} */
+const requesters = new WeakMap();
+
+/**
+ * The one requester for a store, so a new Today view replaces the request
+ * of the view before it.
+ * @param {Store} store
+ */
+export function sharedTopicsRequester(store) {
+  let ask = requesters.get(store);
+  if (!ask) requesters.set(store, (ask = topicsRequester(store)));
+  return ask;
+}
+
 /**
  * Save a finished session and update the theme or covered topics.
  * @param {Store} store

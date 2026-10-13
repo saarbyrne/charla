@@ -6,7 +6,7 @@ import { floatTo16, int16ToFloat, downsample, pcmToBase64, base64ToPcm, parseRat
 import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels, textThinking, LEARNER_SILENCE_MS } from '../src/core/gemini.js';
 import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS, IMPORT_LIMITS } from '../src/core/store.js';
 import { themeId } from '../src/core/themes.js';
-import { saveSession, generateTopics, topicsRequester, TOPICS_WAIT_MS } from '../src/actions.js';
+import { saveSession, generateTopics, topicsRequester, sharedTopicsRequester, TOPICS_WAIT_MS } from '../src/actions.js';
 
 test('system prompt for 5 preguntas', () => {
   const p = systemPrompt({ activity: 'questions', theme: 'La comida', round: 2, previousQuestions: ['¿Qué desayunas?'], about: 'Vivo en Zamora.', recent: [{ date: '2026-09-20', label: 'Aprender algo: Le Corbusier' }] });
@@ -592,6 +592,17 @@ test('asking at once replaces a request that is still waiting', async () => {
   asked[0].answer();
   await settle();
   assert.equal(drawn, 1);
+});
+
+test('every Today view of a store shares one requester, so the newest call wins', async () => {
+  const store = createStore(memoryStorage());
+  assert.equal(sharedTopicsRequester(store), sharedTopicsRequester(store));
+  assert.notEqual(sharedTopicsRequester(store), sharedTopicsRequester(createStore(memoryStorage())));
+  const drawn = [];
+  sharedTopicsRequester(store)(() => drawn.push('old view'), 20);
+  sharedTopicsRequester(store)(() => drawn.push('new view'), 20);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.deepEqual(drawn, ['new view'], 'one request, drawn by the newest view only');
 });
 
 test('topics for old picks are not saved', async () => {
