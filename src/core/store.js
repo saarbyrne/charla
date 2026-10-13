@@ -210,7 +210,6 @@ function checkSession(s) {
 function checkTheme(t) {
   need(isRecord(t));
   text(t.id);
-  need(t.id !== '');
   text(t.name);
   list(t.dates, IMPORT_LIMITS.list, date);
   texts(t.questions);

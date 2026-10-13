@@ -5,6 +5,7 @@ import { appendChunk, cleanTurns } from '../src/core/transcript.js';
 import { floatTo16, int16ToFloat, downsample, pcmToBase64, base64ToPcm, parseRate } from '../src/core/audio.js';
 import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels, textThinking, LEARNER_SILENCE_MS } from '../src/core/gemini.js';
 import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS, IMPORT_LIMITS } from '../src/core/store.js';
+import { themeId } from '../src/core/themes.js';
 import { saveSession, generateTopics, topicsRequester, TOPICS_WAIT_MS } from '../src/actions.js';
 
 test('system prompt for 5 preguntas', () => {
@@ -391,6 +392,18 @@ test('a good copy imports whole', () => {
   assert.deepEqual(store.data.day, copy.day);
   assert.deepEqual(store.data.covered, copy.covered);
   assert.deepEqual(store.data.themes, copy.themes);
+});
+
+test('a theme whose name has no latin letters exports and imports again', () => {
+  const store = createStore(memoryStorage());
+  for (const name of ['⚽', '日本語']) {
+    assert.equal(themeId(name), '', 'the app really saves this id');
+    store.update((d) => { d.themes.push({ id: themeId(name), name, dates: [], questions: [] }); });
+  }
+  const copy = JSON.parse(JSON.stringify(store.exportData()));
+  const other = createStore(memoryStorage());
+  other.importData(copy);
+  assert.deepEqual(other.data.themes, store.data.themes);
 });
 
 test('a broken copy is refused and leaves the data and the stored text as they were', () => {
