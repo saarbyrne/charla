@@ -15,6 +15,18 @@ const realClock = {
   clearTimeout: (id) => clearTimeout(id),
 };
 
+/** Ends the session being watched, or null when none is. */
+let endWatched = /** @type {(() => void) | null} */ (null);
+
+/**
+ * Ends and saves the session being watched, if any. The screen that follows a
+ * session calls this before it draws, because the browser runs its own
+ * hashchange listener before the one that watchLeave adds.
+ */
+export function leaveNow() {
+  endWatched?.();
+}
+
 /**
  * Watch for the person leaving a live session.
  *
@@ -59,6 +71,7 @@ export function watchLeave(leave, {
   }
   function stop() {
     watching = false;
+    if (endWatched === go) endWatched = null;
     clearTimer();
     win.removeEventListener('hashchange', onHash);
     win.removeEventListener('pagehide', go);
@@ -87,6 +100,7 @@ export function watchLeave(leave, {
       else resume();
     }
   }
+  endWatched = go;
   win.addEventListener('hashchange', onHash);
   win.addEventListener('pagehide', go);
   doc.addEventListener('visibilitychange', onVisibility);

@@ -1,7 +1,7 @@
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { LiveSession, addUsage, emptyUsage, USAGE_LOG_LIMIT } from '../src/live/session.js';
-import { watchLeave, keepScreenOn, HIDDEN_LIMIT_MS } from '../src/live/page.js';
+import { watchLeave, leaveNow, keepScreenOn, HIDDEN_LIMIT_MS } from '../src/live/page.js';
 
 // Fakes for the browser APIs a live session uses. Each test file runs in its
 // own process, so these globals don't reach the other tests.
@@ -241,6 +241,30 @@ test('closing the page or going to another screen ends the session', () => {
   moved.win.location.hash = '#/';
   moved.win.dispatchEvent(new Event('hashchange'));
   assert.equal(moved.calls.left, 1);
+});
+
+test('the screen that follows a session is drawn after the session is saved', () => {
+  const page = fakePage();
+  const order = [];
+  // main.js draws on hashchange before the session's own listener exists.
+  page.win.addEventListener('hashchange', () => {
+    if (!page.here()) leaveNow();
+    order.push('drawn');
+  });
+  watchLeave(() => order.push('saved'), { here: page.here, win: page.win, doc: page.doc, clock: page.clock });
+  page.win.location.hash = '#/';
+  page.win.dispatchEvent(new Event('hashchange'));
+  assert.deepEqual(order, ['saved', 'drawn'], 'saved once, before the draw');
+  leaveNow();
+  assert.deepEqual(order, ['saved', 'drawn'], 'nothing left to end');
+});
+
+test('leaving a session on its own ends nothing later', () => {
+  const page = fakePage();
+  const stop = page.watch();
+  stop();
+  leaveNow();
+  assert.equal(page.calls.left, 0);
 });
 
 test('after a session ends, leaving the page does nothing', () => {
