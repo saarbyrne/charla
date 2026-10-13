@@ -35,7 +35,9 @@ export function Settings(app) {
     const f = file.files?.[0];
     if (!f) return;
     try {
-      store.importData(JSON.parse(await f.text()));
+      let copy;
+      try { copy = JSON.parse(await f.text()); } catch { throw new Error('Datos dañados'); }
+      store.importData(copy);
       msg.textContent = 'Importado';
       msg.className = 'msg ok';
     } catch (err) {
