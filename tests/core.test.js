@@ -406,6 +406,34 @@ test('a theme whose name has no latin letters exports and imports again', () => 
   assert.deepEqual(other.data.themes, store.data.themes);
 });
 
+test('import and export read what another tab saved first', () => {
+  const m = memoryStorage();
+  const stale = createStore(m);
+  const other = createStore(m);
+  other.update((d) => { d.settings.apiKey = 'KEY-FROM-OTHER-TAB'; d.interests.push('buceo'); });
+  assert.ok(stale.exportData().interests.includes('buceo'), 'export is not stale');
+  const second = createStore(m);
+  second.update((d) => { d.settings.apiKey = 'NEWER-KEY'; });
+  stale.importData(goodCopy());
+  assert.equal(stale.data.settings.apiKey, 'NEWER-KEY', 'the key another tab just set is kept');
+  assert.equal(JSON.parse(m.getItem(KEY)).settings.apiKey, 'NEWER-KEY');
+});
+
+test('an import that cannot be written is refused and keeps the data', () => {
+  const m = memoryStorage();
+  let full = false;
+  const store = createStore({ ...m, setItem(k, v) { if (full) throw new Error('full'); m.setItem(k, v); } });
+  store.update((d) => { d.interests.push('buceo'); });
+  const before = store.data;
+  const stored = m.getItem(KEY);
+  full = true;
+  assert.throws(() => store.importData(goodCopy()), /Copia demasiado grande/);
+  assert.equal(store.data, before, 'this tab keeps its data');
+  assert.equal(m.getItem(KEY), stored);
+  store.update((d) => { d.interests.push('vela'); });
+  assert.ok(store.data.interests.includes('vela'), 'update still keeps the tab copy when storage is full');
+});
+
 test('a broken copy is refused and leaves the data and the stored text as they were', () => {
   const broken = {
     'a null session': (c) => { c.sessions.push(null); },

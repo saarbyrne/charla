@@ -289,6 +289,7 @@ export function createStore(storage = safeStorage()) {
     }
   }
 
+  /** @returns {boolean} whether the data reached storage */
   function save() {
     // Drop old transcripts and usage logs first so the data stays well under
     // the storage limit.
@@ -300,8 +301,10 @@ export function createStore(storage = safeStorage()) {
       const raw = JSON.stringify(data);
       storage.setItem(KEY, raw);
       seen = raw;
+      return true;
     } catch {
       /* storage full or blocked */
+      return false;
     }
   }
 
@@ -317,11 +320,13 @@ export function createStore(storage = safeStorage()) {
 
     /** Export without the API key. */
     exportData() {
+      refresh();
       return { app: 'charla', exportedAt: new Date().toISOString(), ...data, settings: { ...data.settings, apiKey: '' } };
     },
 
     /** @param {any} incoming */
     importData(incoming) {
+      refresh();
       if (!incoming || incoming.app !== 'charla') throw new Error('No es una copia de Charla');
       if (typeof incoming.schemaVersion !== 'number' || incoming.schemaVersion > SCHEMA_VERSION) throw new Error('Versión no compatible');
       if (!Array.isArray(incoming.themes) || !Array.isArray(incoming.sessions)) throw new Error('Datos incompletos');
@@ -331,9 +336,13 @@ export function createStore(storage = safeStorage()) {
       const key = data.settings.apiKey;
       const { app, exportedAt, ...rest } = cleanCopy(incoming);
       checkCopy(rest);
+      const previous = data;
       data = migrate(rest);
       data.settings.apiKey = key;
-      save();
+      if (!save()) {
+        data = previous;
+        throw new Error(TOO_BIG);
+      }
     },
   };
 }
