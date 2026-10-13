@@ -322,6 +322,47 @@ test('store: persistence, export without key, import keeps key, old transcripts 
   assert.equal(createStore(s).data.sessions.length, 0);
 });
 
+test('a session saved in one tab survives another tab saving', () => {
+  const storage = memoryStorage();
+  const tabA = createStore(storage);
+  const tabB = createStore(storage);
+  const session = (id) => ({ id, date: '2026-10-09', startedAt: '2026-10-09T10:00:00.000Z', seconds: 60, activity: 'questions', themeId: 'el-cafe', themeName: 'El café', round: 1, transcript: [{ role: 'user', text: 'Hola' }] });
+  saveSession(tabA, session('a'));
+  saveSession(tabB, session('b'));
+  tabA.update((d) => { d.settings.about = 'Soy Saar'; });
+  const stored = createStore(storage).data;
+  assert.deepEqual(stored.sessions.map((x) => x.id), ['a', 'b']);
+  assert.equal(stored.settings.about, 'Soy Saar');
+  assert.deepEqual(tabA.data.sessions.map((x) => x.id), ['a', 'b'], 'the tab that saved last sees both');
+  assert.equal(stored.themes.find((t) => t.id === 'el-cafe').dates.length, 2, 'theme dates from both tabs');
+});
+
+test('a summary lands on its session even when another tab saved in between', () => {
+  const storage = memoryStorage();
+  const tabA = createStore(storage);
+  const tabB = createStore(storage);
+  tabA.update((d) => { d.sessions.push({ id: 'a', transcript: [], summary: null }); });
+  tabB.update((d) => { d.sessions.push({ id: 'b', transcript: [], summary: null }); });
+  tabA.update((d) => { d.sessions.find((x) => x.id === 'a').summary = { resumen: 'ok' }; });
+  const stored = createStore(storage).data.sessions;
+  assert.deepEqual(stored.map((x) => x.id), ['a', 'b']);
+  assert.equal(stored[0].summary.resumen, 'ok');
+});
+
+test('a store keeps its own data when the storage cannot be written or read', () => {
+  const m = memoryStorage();
+  const full = { ...m, setItem() { throw new Error('full'); } };
+  const store = createStore(full);
+  store.update((d) => { d.interests.push('a'); });
+  store.update((d) => { d.interests.push('b'); });
+  assert.deepEqual(store.data.interests.slice(-2), ['a', 'b']);
+  const cleared = createStore(m);
+  cleared.update((d) => { d.interests.push('c'); });
+  m.removeItem(KEY);
+  cleared.update((d) => { d.interests.push('d'); });
+  assert.deepEqual(cleared.data.interests.slice(-2), ['c', 'd'], 'cleared storage does not wipe the open tab');
+});
+
 test('level shapes the prompts', async () => {
   const { LEVELS, levelGuide } = await import('../src/core/prompts.js');
   assert.deepEqual(LEVELS, ['A1', 'A2', 'B1', 'B2', 'C1', 'C2']);

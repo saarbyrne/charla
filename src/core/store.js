@@ -132,12 +132,27 @@ function safeStorage() {
 
 /** @param {StorageLike} [storage] */
 export function createStore(storage = safeStorage()) {
+  /** The stored text that `data` was last read from or written to. @type {string | null} */
+  let seen = null;
   /** @type {Data} */
   let data;
   try {
-    data = migrate(JSON.parse(storage.getItem(KEY) ?? 'null'));
+    seen = storage.getItem(KEY);
+    data = migrate(JSON.parse(seen ?? 'null'));
   } catch {
     data = defaultData();
+  }
+
+  /** Another tab may have saved since this one did, so read before changing anything. */
+  function refresh() {
+    try {
+      const raw = storage.getItem(KEY);
+      if (raw === null || raw === seen) return;
+      data = migrate(JSON.parse(raw));
+      seen = raw;
+    } catch {
+      /* unreadable: keep this tab's copy */
+    }
   }
 
   function save() {
@@ -148,7 +163,9 @@ export function createStore(storage = safeStorage()) {
       if (i < data.sessions.length - KEEP_USAGE_LOGS && s.usage?.log) delete s.usage.log;
     });
     try {
-      storage.setItem(KEY, JSON.stringify(data));
+      const raw = JSON.stringify(data);
+      storage.setItem(KEY, raw);
+      seen = raw;
     } catch {
       /* storage full or blocked */
     }
@@ -159,6 +176,7 @@ export function createStore(storage = safeStorage()) {
 
     /** @param {(d: Data) => void} fn */
     update(fn) {
+      refresh();
       fn(data);
       save();
     },
