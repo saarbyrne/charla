@@ -84,6 +84,14 @@ export const DEFAULT_INTERESTS = [
   'novelas', 'audiolibros', 'ciclismo', 'viajes', 'historia', 'ciencia', 'gastronomía', 'cine',
 ];
 
+/** What an imported copy may hold. Far above real use; anything bigger is refused. */
+export const IMPORT_LIMITS = { sessions: 10_000, themes: 2_000, interests: 500, covered: 20_000, turns: 10_000, list: 10_000, text: 100_000, nodes: 1_000_000, depth: 12 };
+
+const DAMAGED = 'Datos dañados';
+const TOO_BIG = 'Copia demasiado grande';
+/** Keys that could reach the prototype of the objects built from a file. */
+const UNSAFE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /** @returns {Data} */
 export function defaultData() {
   return {
@@ -108,6 +116,133 @@ export function migrate(stored) {
     day: { ...base.day, ...(stored.day ?? {}) },
     schemaVersion: SCHEMA_VERSION,
   };
+}
+
+/** @param {unknown} v @returns {v is Record<string, any>} */
+const isRecord = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * A copy of a parsed file without the keys that reach the prototype. Refuses
+ * a file with too many values or too deeply nested.
+ * @param {any} value
+ * @param {{ nodes: number }} [count]
+ * @param {number} [depth]
+ * @returns {any}
+ */
+function cleanCopy(value, count = { nodes: 0 }, depth = 0) {
+  if (++count.nodes > IMPORT_LIMITS.nodes || depth > IMPORT_LIMITS.depth) throw new Error(TOO_BIG);
+  if (Array.isArray(value)) return value.map((v) => cleanCopy(v, count, depth + 1));
+  if (!isRecord(value)) return value;
+  /** @type {Record<string, any>} */
+  const out = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (!UNSAFE_KEYS.has(k)) out[k] = cleanCopy(v, count, depth + 1);
+  }
+  return out;
+}
+
+/** @param {boolean} ok */
+function need(ok) {
+  if (!ok) throw new Error(DAMAGED);
+}
+
+/** @param {any} v */
+function text(v) {
+  need(typeof v === 'string');
+  if (v.length > IMPORT_LIMITS.text) throw new Error(TOO_BIG);
+}
+
+/** @param {any} v @param {number} max @param {(item: any) => void} each */
+function list(v, max, each) {
+  need(Array.isArray(v));
+  if (v.length > max) throw new Error(TOO_BIG);
+  v.forEach(each);
+}
+
+/** @param {any} v */
+const texts = (v) => list(v, IMPORT_LIMITS.list, text);
+
+/** @param {any} v */
+function date(v) {
+  need(typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v));
+}
+
+/** A check for a field that may be missing. @param {(v: any) => void} check */
+const optional = (check) => (/** @type {any} */ v) => { if (v !== undefined) check(v); };
+
+/** @param {any} t */
+function checkTopic(t) {
+  need(isRecord(t));
+  text(t.interest);
+  text(t.title);
+  optional(text)(t.hook);
+}
+
+/** @param {any} s */
+function checkSummary(s) {
+  need(isRecord(s));
+  texts(s.preguntas);
+  text(s.resumen);
+  list(s.vocabulario, IMPORT_LIMITS.list, (v) => { need(isRecord(v)); text(v.es); text(v.en); });
+  list(s.correcciones, IMPORT_LIMITS.list, (c) => { need(isRecord(c)); text(c.dije); text(c.mejor); });
+}
+
+/** @param {any} s */
+function checkSession(s) {
+  need(isRecord(s));
+  text(s.id);
+  need(s.id !== '');
+  date(s.date);
+  text(s.startedAt);
+  need(Number.isFinite(s.seconds) && s.seconds >= 0);
+  need(s.activity === 'questions' || s.activity === 'learn');
+  optional(text)(s.themeId);
+  optional(text)(s.themeName);
+  optional((r) => need(Number.isFinite(r)))(s.round);
+  optional(checkTopic)(s.topic);
+  list(s.transcript, IMPORT_LIMITS.turns, (t) => { need(isRecord(t) && (t.role === 'user' || t.role === 'model')); text(t.text); });
+  optional(checkSummary)(s.summary ?? undefined);
+  optional(text)(s.summaryError);
+  optional((u) => need(isRecord(u)))(s.usage);
+}
+
+/** @param {any} t */
+function checkTheme(t) {
+  need(isRecord(t));
+  text(t.id);
+  need(t.id !== '');
+  text(t.name);
+  list(t.dates, IMPORT_LIMITS.list, date);
+  texts(t.questions);
+}
+
+/** @param {any} s */
+function checkSettings(s) {
+  need(isRecord(s));
+  for (const k of ['liveModel', 'textModel', 'voice', 'about', 'level']) optional(text)(s[k]);
+  optional(texts)(s.liveModels);
+  optional(texts)(s.textModels);
+}
+
+/** @param {any} d */
+function checkDay(d) {
+  need(isRecord(d));
+  optional(text)(d.date);
+  optional((t) => list(t, IMPORT_LIMITS.list, checkTopic))(d.topics);
+  for (const k of ['skip', 'rejected', 'shownInterests', 'picked']) optional(texts)(d[k]);
+}
+
+/**
+ * Refuse a copy whose records the screens could not draw.
+ * @param {Record<string, any>} copy
+ */
+function checkCopy(copy) {
+  list(copy.sessions, IMPORT_LIMITS.sessions, checkSession);
+  list(copy.themes, IMPORT_LIMITS.themes, checkTheme);
+  optional((v) => list(v, IMPORT_LIMITS.interests, text))(copy.interests);
+  optional((v) => list(v, IMPORT_LIMITS.covered, (c) => { need(isRecord(c)); date(c.date); text(c.interest); text(c.title); }))(copy.covered);
+  optional(checkSettings)(copy.settings);
+  optional(checkDay)(copy.day);
 }
 
 /** @typedef {{ getItem(k: string): string | null, setItem(k: string, v: string): void, removeItem(k: string): void }} StorageLike */
@@ -195,7 +330,8 @@ export function createStore(storage = safeStorage()) {
       // was added by hand, and it would send the conversations to someone
       // else's Google project.
       const key = data.settings.apiKey;
-      const { app, exportedAt, ...rest } = incoming;
+      const { app, exportedAt, ...rest } = cleanCopy(incoming);
+      checkCopy(rest);
       data = migrate(rest);
       data.settings.apiKey = key;
       save();

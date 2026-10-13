@@ -4,7 +4,7 @@ import { systemPrompt, kickoff, summaryPrompt, topicsPrompt, transcriptText } fr
 import { appendChunk, cleanTurns } from '../src/core/transcript.js';
 import { floatTo16, int16ToFloat, downsample, pcmToBase64, base64ToPcm, parseRate } from '../src/core/audio.js';
 import { pickLiveModels, pickTextModels, parseJson, setupMessage, audioMessage, textMessage, parseServerMessage, parseUsage, liveUrl, generateJson, listModels, textThinking, LEARNER_SILENCE_MS } from '../src/core/gemini.js';
-import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS } from '../src/core/store.js';
+import { createStore, memoryStorage, KEY, KEEP_TRANSCRIPTS, KEEP_USAGE_LOGS, IMPORT_LIMITS } from '../src/core/store.js';
 import { saveSession } from '../src/actions.js';
 
 test('system prompt for 5 preguntas', () => {
@@ -361,6 +361,144 @@ test('a store keeps its own data when the storage cannot be written or read', ()
   m.removeItem(KEY);
   cleared.update((d) => { d.interests.push('d'); });
   assert.deepEqual(cleared.data.interests.slice(-2), ['c', 'd'], 'cleared storage does not wipe the open tab');
+});
+
+/** A good copy with one full session of each kind, as the Exportar button writes it. */
+function goodCopy() {
+  const source = createStore(memoryStorage());
+  const usage = { model: 'm', turns: 1, reports: 1, input: { audio: 2, text: 3 }, log: [{ ms: 5, turnComplete: true, usageMetadata: { totalTokenCount: 9 } }] };
+  saveSession(source, {
+    id: 'a', date: '2026-10-09', startedAt: '2026-10-09T10:00:00.000Z', seconds: 600, activity: 'questions',
+    themeId: 'el-cafe', themeName: 'El café', round: 1, transcript: [{ role: 'user', text: 'Hola' }, { role: 'model', text: 'Buenas' }], usage,
+  });
+  saveSession(source, {
+    id: 'b', date: '2026-10-10', startedAt: '2026-10-10T10:00:00.000Z', seconds: 300, activity: 'learn',
+    topic: { interest: 'cine', title: 'Buñuel', hook: 'Un aragonés surrealista' }, transcript: [],
+  });
+  source.update((d) => {
+    d.sessions[0].summary = { preguntas: ['¿Qué tal?'], resumen: 'Hablamos del café.', vocabulario: [{ es: 'cortado', en: 'cortado' }], correcciones: [{ dije: 'yo es', mejor: 'yo soy' }] };
+    d.sessions[1].summaryError = 'Sin red';
+    d.day = { date: '2026-10-10', topics: [{ interest: 'cine', title: 'Buñuel', hook: '' }], skip: ['el-cafe'], rejected: ['x'], shownInterests: ['cine'], picked: ['cine'] };
+  });
+  return JSON.parse(JSON.stringify(source.exportData()));
+}
+
+test('a good copy imports whole', () => {
+  const copy = goodCopy();
+  const store = createStore(memoryStorage());
+  store.importData(copy);
+  assert.deepEqual(store.data.sessions, copy.sessions);
+  assert.deepEqual(store.data.day, copy.day);
+  assert.deepEqual(store.data.covered, copy.covered);
+  assert.deepEqual(store.data.themes, copy.themes);
+});
+
+test('a broken copy is refused and leaves the data and the stored text as they were', () => {
+  const broken = {
+    'a null session': (c) => { c.sessions.push(null); },
+    'a session that is a string': (c) => { c.sessions[0] = 'hola'; },
+    'a session without an id': (c) => { delete c.sessions[0].id; },
+    'a session with an empty id': (c) => { c.sessions[0].id = ''; },
+    'a session with a bad date': (c) => { c.sessions[0].date = 'ayer'; },
+    'a session with no duration': (c) => { c.sessions[0].seconds = '600'; },
+    'an unknown activity': (c) => { c.sessions[0].activity = 'jugar'; },
+    'a transcript that is not a list': (c) => { c.sessions[0].transcript = 'hola'; },
+    'a transcript turn that is null': (c) => { c.sessions[0].transcript[0] = null; },
+    'a transcript turn with a bad speaker': (c) => { c.sessions[0].transcript[0].role = 'system'; },
+    'a transcript turn with no text': (c) => { c.sessions[0].transcript[0].text = 5; },
+    'a summary that is a string': (c) => { c.sessions[0].summary = 'ok'; },
+    'a summary without its lists': (c) => { delete c.sessions[0].summary.vocabulario; },
+    'a vocabulary entry that is null': (c) => { c.sessions[0].summary.vocabulario[0] = null; },
+    'a correction that is a number': (c) => { c.sessions[0].summary.correcciones[0] = 3; },
+    'a topic that is a string': (c) => { c.sessions[1].topic = 'Buñuel'; },
+    'a topic without a title': (c) => { delete c.sessions[1].topic.title; },
+    'usage that is a list': (c) => { c.sessions[0].usage = []; },
+    'a theme that is null': (c) => { c.themes[0] = null; },
+    'a theme without dates': (c) => { delete c.themes[0].dates; },
+    'a theme with a bad date': (c) => { c.themes[0].dates = [4]; },
+    'questions that are not text': (c) => { c.themes[0].questions = [{}]; },
+    'interests that are a string': (c) => { c.interests = 'cine'; },
+    'an interest that is null': (c) => { c.interests[0] = null; },
+    'a covered entry that is null': (c) => { c.covered.push(null); },
+    'a covered entry without a title': (c) => { delete c.covered[0].title; },
+    'a day that is a list': (c) => { c.day = []; },
+    'a day skip list that is a string': (c) => { c.day.skip = 'el-cafe'; },
+    'a day topic that is null': (c) => { c.day.topics[0] = null; },
+    'settings that are a string': (c) => { c.settings = 'x'; },
+    'a model list with a number': (c) => { c.settings.liveModels = [1]; },
+    'an about text that is a number': (c) => { c.settings.about = 1; },
+  };
+  for (const [name, break_] of Object.entries(broken)) {
+    const storage = memoryStorage();
+    const store = createStore(storage);
+    store.update((d) => { d.settings.apiKey = 'MINE'; d.interests.push('música'); });
+    const before = JSON.stringify(store.data);
+    const stored = storage.getItem(KEY);
+    const copy = goodCopy();
+    break_(copy);
+    assert.throws(() => store.importData(copy), /Datos dañados/, name);
+    assert.equal(JSON.stringify(store.data), before, `${name}: data untouched`);
+    assert.equal(storage.getItem(KEY), stored, `${name}: stored text untouched`);
+  }
+});
+
+test('the top-level checks still refuse other files', () => {
+  const store = createStore(memoryStorage());
+  assert.throws(() => store.importData(null), /No es una copia de Charla/);
+  assert.throws(() => store.importData({ app: 'verbos' }), /No es una copia de Charla/);
+  assert.throws(() => store.importData({ ...goodCopy(), schemaVersion: 99 }), /Versión no compatible/);
+  assert.throws(() => store.importData({ ...goodCopy(), sessions: null }), /Datos incompletos/);
+});
+
+test('a hostile copy cannot reach the prototype and never brings a key', () => {
+  const copy = JSON.parse(JSON.stringify(goodCopy()).replace(/^\{/, '{"__proto__":{"polluted":"top"},"constructor":{"prototype":{"polluted":"ctor"}},'));
+  copy.sessions[0] = JSON.parse(`{"__proto__":{"polluted":"session"},"constructor":"x",${JSON.stringify(copy.sessions[0]).slice(1)}`);
+  copy.sessions[0].usage = JSON.parse('{"model":"m","__proto__":{"polluted":"usage"},"input":{"__proto__":{"polluted":"deep"},"audio":1}}');
+  copy.settings = JSON.parse('{"__proto__":{"polluted":"settings"},"apiKey":"SOMEONE-ELSE","about":"hola"}');
+  const store = createStore(memoryStorage());
+  store.update((d) => { d.settings.apiKey = 'MINE'; });
+  store.importData(copy);
+  assert.equal(({}).polluted, undefined);
+  assert.equal(store.data.polluted, undefined);
+  assert.equal(store.data.sessions[0].polluted, undefined);
+  assert.equal(store.data.sessions[0].usage.input.polluted, undefined);
+  assert.equal(store.data.settings.polluted, undefined);
+  const own = (o) => Object.keys(o).filter((k) => k === '__proto__' || k === 'constructor');
+  for (const o of [store.data, store.data.sessions[0], store.data.sessions[0].usage, store.data.sessions[0].usage.input, store.data.settings]) assert.deepEqual(own(o), []);
+  assert.equal(store.data.sessions[0].usage.input.audio, 1, 'the rest of the record is kept');
+  assert.equal(store.data.settings.apiKey, 'MINE');
+  assert.equal(store.data.settings.about, 'hola');
+});
+
+test('a copy far bigger than real use is refused', () => {
+  const store = createStore(memoryStorage());
+  const tooMany = (key, make) => {
+    const copy = goodCopy();
+    copy[key] = Array.from({ length: IMPORT_LIMITS[key] + 1 }, make);
+    assert.throws(() => store.importData(copy), /Copia demasiado grande/, key);
+  };
+  tooMany('sessions', (_, i) => ({ id: String(i), date: '2026-10-09', startedAt: '', seconds: 1, activity: 'learn', transcript: [] }));
+  tooMany('themes', (_, i) => ({ id: String(i), name: 'x', dates: [], questions: [] }));
+  tooMany('interests', () => 'x');
+  tooMany('covered', () => ({ date: '2026-10-09', interest: 'x', title: 'x' }));
+
+  const long = goodCopy();
+  long.sessions[0].transcript[0].text = 'x'.repeat(IMPORT_LIMITS.text + 1);
+  assert.throws(() => store.importData(long), /Copia demasiado grande/, 'a very long text');
+
+  const turns = goodCopy();
+  turns.sessions[0].transcript = Array.from({ length: IMPORT_LIMITS.turns + 1 }, () => ({ role: 'user', text: 'x' }));
+  assert.throws(() => store.importData(turns), /Copia demasiado grande/, 'a very long transcript');
+
+  const deep = goodCopy();
+  let nest = {};
+  for (let i = 0; i < 100; i++) nest = { nest };
+  deep.sessions[0].usage = nest;
+  assert.throws(() => store.importData(deep), /Copia demasiado grande/, 'deeply nested records');
+
+  const sprawl = goodCopy();
+  sprawl.sessions[0].usage = { log: Array.from({ length: IMPORT_LIMITS.nodes + 1 }, () => 0) };
+  assert.throws(() => store.importData(sprawl), /Copia demasiado grande/, 'too many values in all');
 });
 
 test('level shapes the prompts', async () => {
