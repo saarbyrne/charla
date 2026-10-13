@@ -7,6 +7,7 @@ import { History, SessionDetail } from './views/history.js';
 import { Themes } from './views/themes.js';
 import { Settings } from './views/settings.js';
 import { AppsButton } from './lib/apps.js';
+import { leaveNow } from './live/page.js';
 
 /** @typedef {import('./app.js').App} App */
 
@@ -41,6 +42,8 @@ const app = { store: createStore(), rerender: () => render() };
 
 function render() {
   const [a, b] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
+  // Save a session that is still running before the next screen reads the data.
+  if (a !== 'sesion') leaveNow();
   document.body.classList.toggle('session-mode', a === 'sesion');
   const back = backFor(a, b);
   if (back) replace(nav, h('a', { class: 'back', href: back.href }, h('span', { class: 'icon', innerHTML: CHEVRON }), back.label));

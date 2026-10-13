@@ -2,7 +2,7 @@
 import { h, replace } from '../lib/h.js';
 import { today, shortDate } from '../core/dates.js';
 import { pickTheme } from '../core/themes.js';
-import { generateTopics } from '../actions.js';
+import { sharedTopicsRequester, TOPICS_WAIT_MS } from '../actions.js';
 import { levelLabel } from '../core/prompts.js';
 import { KeyForm } from './keyCard.js';
 import { LevelPicker } from './levelPicker.js';
@@ -53,7 +53,7 @@ export function Today(app) {
             x.day.topics = [];
           });
           renderPicks();
-          renderTopics();
+          renderTopics(TOPICS_WAIT_MS);
         },
       }, i)));
   };
@@ -63,8 +63,9 @@ export function Today(app) {
     : null;
 
   const topicList = h('div', { class: 'topics' });
-  let request = 0;
-  const renderTopics = () => {
+  const askTopics = sharedTopicsRequester(store);
+  /** @param {number} [wait]  ms to wait for more taps before asking for topics */
+  const renderTopics = (wait = 0) => {
     const topics = store.data.day.topics;
     if (!store.data.interests.length) {
       replace(topicList, h('a', { class: 'btn', href: '#/temas' }, 'Añadir intereses'));
@@ -72,11 +73,7 @@ export function Today(app) {
     }
     if (!topics.length) {
       replace(topicList, h('div', { class: 'sub loading' }, 'Buscando temas…'));
-      // Each new request replaces the last, so a slow answer for old picks is ignored.
-      const mine = ++request;
-      generateTopics(store, () => mine === request).then(() => {
-        if (mine === request && store.data.day.topics.length) renderTopics();
-      });
+      askTopics(() => { if (store.data.day.topics.length) renderTopics(); }, wait);
       return;
     }
     replace(topicList, topics.map((t) =>

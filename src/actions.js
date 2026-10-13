@@ -72,6 +72,49 @@ export async function generateTopics(store, isCurrent = () => true) {
   return topics;
 }
 
+/** How long the picked interests stay unchanged before topics are asked for. */
+export const TOPICS_WAIT_MS = 800;
+
+/**
+ * Asks for topics once the picks stop changing. Each call replaces the one
+ * before: a call still waiting is dropped, and an answer still on its way is
+ * neither saved nor drawn.
+ * @param {Store} store
+ * @param {{ generate?: typeof generateTopics, clock?: { setTimeout(fn: () => void, ms: number): any, clearTimeout(id: any): void } }} [opts]
+ * @returns {(done: () => void, wait?: number) => void}
+ *   `done` runs when the answer for this call is saved. `wait` is the quiet time in ms, or 0 to ask at once.
+ */
+export function topicsRequester(store, { generate = generateTopics, clock = globalThis } = {}) {
+  let latest = 0;
+  /** @type {any} */
+  let timer = null;
+  return (done, wait = 0) => {
+    clock.clearTimeout(timer);
+    const mine = ++latest;
+    const run = () => {
+      generate(store, () => mine === latest).then(() => {
+        if (mine === latest) done();
+      });
+    };
+    if (wait > 0) timer = clock.setTimeout(run, wait);
+    else run();
+  };
+}
+
+/** @type {WeakMap<Store, ReturnType<typeof topicsRequester>>} */
+const requesters = new WeakMap();
+
+/**
+ * The one requester for a store, so a new Today view replaces the request
+ * of the view before it.
+ * @param {Store} store
+ */
+export function sharedTopicsRequester(store) {
+  let ask = requesters.get(store);
+  if (!ask) requesters.set(store, (ask = topicsRequester(store)));
+  return ask;
+}
+
 /**
  * Save a finished session and update the theme or covered topics.
  * @param {Store} store
