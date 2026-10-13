@@ -20,8 +20,9 @@ let endWatched = /** @type {(() => void) | null} */ (null);
 
 /**
  * Ends and saves the session being watched, if any. The screen that follows a
- * session calls this before it draws, because the browser runs its own
- * hashchange listener before the one that watchLeave adds.
+ * session calls this before it draws, because the first hashchange listener
+ * is `render` in main.js, registered at load, so it runs before the one that
+ * watchLeave adds later.
  */
 export function leaveNow() {
   endWatched?.();
